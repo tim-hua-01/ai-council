@@ -20,12 +20,106 @@ let globalRequestInProgress = false;
 let globalSystemMessage = "";
 let selectedPanelForSystemMessage = null;
 
+// Last-used layout (panel count + each panel's model and reasoning effort), kept in
+// localStorage so a refresh or relaunch restores it. Falls back to the config defaults.
+const PREFS_KEY = "ai4ais.panelPrefs.v1";
+
+function loadPrefs() {
+    try {
+        return JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function savePrefs() {
+    try {
+        // Merge into the saved list so panels beyond the current count keep their
+        // choices if the count is raised again.
+        const prev = loadPrefs();
+        const panels = Array.isArray(prev.panels) ? prev.panels.slice() : [];
+        panelStates.forEach((s, i) => {
+            panels[i] = { model: s.model, effort: s.reasoningEffort };
+        });
+        localStorage.setItem(PREFS_KEY, JSON.stringify({ count: currentPanelCount, panels }));
+    } catch (e) {
+        console.warn("Could not save panel preferences:", e);
+    }
+}
+
+// Real token counts from the server (/api/count_tokens → Anthropic's count_tokens API).
+// Exact for Claude models; for any other model it's counted with Claude's tokenizer and
+// flagged `exact: false`, so we show it with a "≈". Returns null if the count failed.
+async function fetchTokenCount(text, modelId) {
+    if (!text) return { tokens: 0, exact: true };
+    try {
+        const res = await fetch("/api/count_tokens", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, model: modelId }),
+        });
+        const data = await res.json();
+        return data.error ? null : data;
+    } catch (e) {
+        return null;
+    }
+}
+
+function formatTokenCount(result) {
+    if (!result) return "";
+    return `${result.exact ? "" : "≈"}${result.tokens.toLocaleString()} tokens`;
+}
+
+function tokenCountTitle(result) {
+    if (!result) return "";
+    return result.exact
+        ? `Counted with ${result.counted_with}'s tokenizer`
+        : `Approximate: counted with ${result.counted_with}'s tokenizer, not this model's`;
+}
+
+// Keep `badge` showing the token count of `textarea`'s text (debounced, race-safe).
+// `getModelId` says which model's tokenizer to use.
+function bindTokenCounter(textarea, badge, getModelId) {
+    let timer = null;
+    let seq = 0;
+    const update = () => {
+        clearTimeout(timer);
+        const text = textarea.value;
+        const mySeq = ++seq;
+        if (!text) {
+            badge.textContent = "";
+            return;
+        }
+        timer = setTimeout(async () => {
+            const result = await fetchTokenCount(text, getModelId());
+            if (mySeq !== seq) return; // a newer keystroke superseded this request
+            badge.textContent = formatTokenCount(result);
+            badge.title = tokenCountTitle(result);
+        }, 350);
+    };
+    textarea.addEventListener("input", update);
+}
+
+// Refresh the badge on the shared input, e.g. after a panel's model changes.
+function refreshGlobalTokenCount() {
+    const el = document.getElementById("globalInput");
+    if (el) el.dispatchEvent(new Event("input"));
+}
+
+// Clear a textarea and refresh its token badge (setting .value doesn't fire "input").
+function clearInput(textarea) {
+    textarea.value = "";
+    textarea.dispatchEvent(new Event("input"));
+}
+
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", async () => {
     await loadConfig();
     const panelCountSelect = document.getElementById("panelCount");
-    panelCountSelect.value = String(DEFAULT_PANEL_COUNT);
-    initializePanels(DEFAULT_PANEL_COUNT);
+    const savedCount = parseInt(loadPrefs().count);
+    const count = savedCount >= 1 && savedCount <= 6 ? savedCount : DEFAULT_PANEL_COUNT;
+    panelCountSelect.value = String(count);
+    initializePanels(count);
     setupEventListeners();
 });
 
@@ -72,8 +166,11 @@ function effortOptionsHtml(modelId, selectedEffort) {
     const sel = selectedEffort || "default";
     return options
         .map((e) => {
-            const labelMap = { default: `default (${(m && m.reasoning_effort) || "none"})` };
-            const label = labelMap[e] || e;
+            // The closed select shows the selected label, so spell out "reasoning: X".
+            const label =
+                e === "default"
+                    ? `reasoning: ${(m && m.reasoning_effort) || "none"} (default)`
+                    : `reasoning: ${e}`;
             return `<option value="${e}" ${e === sel ? "selected" : ""}>${label}</option>`;
         })
         .join("");
@@ -83,20 +180,28 @@ function initializePanels(count) {
     const panelsGrid = document.getElementById("panelsGrid");
     panelsGrid.innerHTML = "";
     panelStates = [];
+    document.querySelector(".container").classList.remove("panel-focus");
     currentPanelCount = count;
 
     panelsGrid.className = `panels-grid grid-${count}`;
 
     const fallbackModel = AVAILABLE_MODELS.length ? AVAILABLE_MODELS[0].id : "";
+    const savedPanels = loadPrefs().panels || [];
 
     for (let i = 0; i < count; i++) {
-        const model = DEFAULT_PANEL_MODELS[i] || DEFAULT_PANEL_MODELS[0] || fallbackModel;
-        const panel = createPanel(i, model);
+        // Prefer the last-used model/effort if it still exists in the config.
+        const saved = savedPanels[i] || {};
+        const model = MODELS_BY_ID[saved.model]
+            ? saved.model
+            : DEFAULT_PANEL_MODELS[i] || DEFAULT_PANEL_MODELS[0] || fallbackModel;
+        const efforts = (MODELS_BY_ID[model] && MODELS_BY_ID[model].available_efforts) || REASONING_EFFORT_OPTIONS;
+        const effort = MODELS_BY_ID[saved.model] && efforts.includes(saved.effort) ? saved.effort : "default";
+        const panel = createPanel(i, model, effort);
         panelsGrid.appendChild(panel);
 
         panelStates[i] = {
             model: model,
-            reasoningEffort: "default",
+            reasoningEffort: effort,
             messages: [],
             element: panel,
             chatArea: panel.querySelector(".chat-area"),
@@ -109,6 +214,7 @@ function initializePanels(count) {
             systemMessage: "",
         };
 
+        bindTokenCounter(panelStates[i].input, panel.querySelector(".token-count"), () => panelStates[i].model);
         panelStates[i].sendBtn.addEventListener("click", () => sendToPanelMessage(i));
         panelStates[i].input.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -121,40 +227,87 @@ function initializePanels(count) {
             // Refresh the effort dropdown for the newly selected model.
             panelStates[i].reasoningEffort = "default";
             panelStates[i].effortSelect.innerHTML = effortOptionsHtml(e.target.value, "default");
+            savePrefs();
+            // The tokenizer depends on the model, so recount what's typed.
+            panelStates[i].input.dispatchEvent(new Event("input"));
+            refreshGlobalTokenCount();
         });
         panelStates[i].effortSelect.addEventListener("change", (e) => {
             panelStates[i].reasoningEffort = e.target.value;
+            savePrefs();
         });
         panelStates[i].resetBtn.addEventListener("click", () => resetPanelChat(i));
+        panel.querySelector(".panel-focus-btn").addEventListener("click", () => togglePanelFocus(i));
     }
+
+    savePrefs();
+    refreshGlobalTokenCount();
 }
 
-function createPanel(index, model) {
+// Inline SVG icons for the panel focus button.
+const ICON_EXPAND =
+    '<svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.5 1.5h4v4M5.5 12.5h-4v-4M12.5 1.5L8 6M1.5 12.5L6 8"/></svg>';
+const ICON_COLLAPSE =
+    '<svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12.5 5.5h-4v-4M1.5 8.5h4v4M8.5 5.5L13 1M5.5 8.5L1 13"/></svg>';
+
+// Focus mode: one panel fills the whole window (header, shared input and the other
+// panels are hidden). Click the button again or press Esc to return.
+function focusedPanelIndex() {
+    return panelStates.findIndex((s) => s.element.classList.contains("maximized"));
+}
+
+function setPanelFocus(index) {
+    const container = document.querySelector(".container");
+    panelStates.forEach((s, i) => {
+        const on = i === index;
+        s.element.classList.toggle("maximized", on);
+        const btn = s.element.querySelector(".panel-focus-btn");
+        btn.innerHTML = on ? ICON_COLLAPSE : ICON_EXPAND;
+        btn.title = on ? "Back to all panels (Esc)" : "Fill the whole window (Esc to go back)";
+    });
+    container.classList.toggle("panel-focus", index !== null);
+    // Panels that were hidden may have received messages; show their latest.
+    requestAnimationFrame(() => {
+        panelStates.forEach((s) => (s.chatArea.scrollTop = s.chatArea.scrollHeight));
+    });
+}
+
+function togglePanelFocus(index) {
+    setPanelFocus(focusedPanelIndex() === index ? null : index);
+}
+
+function createPanel(index, model, effort = "default") {
     const panel = document.createElement("div");
     panel.className = "panel";
 
     panel.innerHTML = `
         <div class="panel-header">
             <div class="panel-title-wrapper">
-                <span class="panel-title-text" contenteditable="true">Model ${index + 1}</span>
-                <select class="panel-model-select">
-                    ${modelOptionsHtml(model)}
-                </select>
+                <div class="panel-model-group">
+                    <span class="panel-num" title="Panel ${index + 1}">(${index + 1})</span>
+                    <select class="panel-model-select" title="Model">
+                        ${modelOptionsHtml(model)}
+                    </select>
+                </div>
                 <select class="panel-effort-select" title="Reasoning effort">
-                    ${effortOptionsHtml(model, "default")}
+                    ${effortOptionsHtml(model, effort)}
                 </select>
+                <button type="button" class="panel-focus-btn" title="Fill the whole window (Esc to go back)">${ICON_EXPAND}</button>
             </div>
         </div>
         <div class="chat-area"></div>
         <div class="panel-footer">
-            <div class="panel-input-container">
+            <div class="input-wrap">
                 <textarea
                     class="panel-input"
-                    placeholder="Send to this model only... (Shift+Enter for newline)"
+                    placeholder="Send to this model only…"
                     rows="2"
                 ></textarea>
-                <button class="btn btn-primary btn-sm panel-send-btn">Send</button>
+                <span class="token-count"></span>
+            </div>
+            <div class="panel-input-actions">
                 <button class="btn btn-sm panel-reset-btn" title="Clear this panel's chat">Reset</button>
+                <button class="btn btn-primary btn-sm panel-send-btn">Send</button>
             </div>
         </div>
     `;
@@ -170,6 +323,15 @@ function setupEventListeners() {
     const resizeHandle = document.querySelector(".main-resize-handle");
     const panelsGrid = document.getElementById("panelsGrid");
 
+    // The shared input goes to every panel, so count with the first Claude panel's
+    // tokenizer if there is one (the server falls back to a Claude model otherwise).
+    bindTokenCounter(globalInput, document.getElementById("globalTokenCount"), () => {
+        const claudePanel = panelStates.find((s) => MODELS_BY_ID[s.model] && MODELS_BY_ID[s.model].backend === "anthropic");
+        return (claudePanel || panelStates[0] || {}).model;
+    });
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && focusedPanelIndex() !== -1) setPanelFocus(null);
+    });
     sendAllBtn.addEventListener("click", sendToAllModels);
     globalInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -260,7 +422,7 @@ function setupEventListeners() {
 function resetPanelChat(panelIndex) {
     panelStates[panelIndex].messages = [];
     panelStates[panelIndex].chatArea.innerHTML = "";
-    panelStates[panelIndex].input.value = "";
+    clearInput(panelStates[panelIndex].input);
 }
 
 function updatePanelSystemSelectDropdown() {
@@ -338,7 +500,7 @@ async function sendToAllModels() {
         displayMessage(i, "user", message);
     }
 
-    globalInput.value = "";
+    clearInput(globalInput);
     globalInput.focus();
 
     const panels = panelStates.map((state) => ({
@@ -360,7 +522,7 @@ async function sendToPanelMessage(panelIndex) {
 
     state.messages.push({ role: "user", content: message });
     displayMessage(panelIndex, "user", message);
-    state.input.value = "";
+    clearInput(state.input);
 
     const panels = panelStates.map((s, idx) => ({
         model: s.model,
@@ -420,12 +582,13 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
                     const content = result.content;
                     const duration = result.duration || 0;
                     const thinking = result.thinking || null;
+                    const usage = result.usage || null;
 
                     if (content.startsWith("Error:")) {
-                        displayMessage(idx, "assistant", content, duration, thinking);
+                        displayMessage(idx, "assistant", content, duration, thinking, usage);
                     } else {
                         panelStates[idx].messages.push({ role: "assistant", content: content });
-                        displayMessage(idx, "assistant", content, duration, thinking);
+                        displayMessage(idx, "assistant", content, duration, thinking, usage);
                     }
                 })
                 .catch((error) => {
@@ -460,7 +623,70 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
     }
 }
 
-function displayMessage(panelIndex, role, content, duration = null, thinking = null) {
+// Copy text to the clipboard; falls back to execCommand where the async API is unavailable.
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try {
+            ok = document.execCommand("copy");
+        } catch (err) {
+            console.error("Copy failed:", err);
+        }
+        document.body.removeChild(ta);
+        return ok;
+    }
+}
+
+// Small "Copy" button that copies the raw message text (markdown source, not rendered HTML).
+function createCopyButton(text) {
+    const btn = document.createElement("button");
+    btn.className = "message-copy-btn";
+    btn.type = "button";
+    btn.title = "Copy message";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", async () => {
+        const ok = await copyText(text);
+        btn.textContent = ok ? "Copied!" : "Failed";
+        btn.classList.toggle("copied", ok);
+        setTimeout(() => {
+            btn.textContent = "Copy";
+            btn.classList.remove("copied");
+        }, 1200);
+    });
+    return btn;
+}
+
+// "1.2k" style token counts for the usage line.
+function fmtTokens(n) {
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+// e.g. "in 1.2k (cached 1.1k) · out 340"; empty string if the provider reported nothing.
+function formatUsage(usage) {
+    if (!usage) return "";
+    const parts = [];
+    if (usage.input != null) {
+        let s = `in ${fmtTokens(usage.input)}`;
+        const extra = [];
+        if (usage.cached) extra.push(`cached ${fmtTokens(usage.cached)}`);
+        if (usage.cache_write) extra.push(`cache write ${fmtTokens(usage.cache_write)}`);
+        if (extra.length) s += ` (${extra.join(", ")})`;
+        parts.push(s);
+    }
+    if (usage.output != null) parts.push(`out ${fmtTokens(usage.output)}`);
+    return parts.join(" · ");
+}
+
+function displayMessage(panelIndex, role, content, duration = null, thinking = null, usage = null) {
     if (!panelStates[panelIndex]) {
         console.error(`Panel ${panelIndex} not found`);
         return;
@@ -524,21 +750,46 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
 
-        try {
-            bubble.innerHTML = marked.parse(content);
-        } catch (e) {
-            console.error("Error parsing markdown:", e);
+        if (role === "user") {
+            // Show what the user typed verbatim (CSS keeps their line breaks).
             bubble.textContent = content;
+        } else {
+            try {
+                bubble.innerHTML = marked.parse(content);
+            } catch (e) {
+                console.error("Error parsing markdown:", e);
+                bubble.textContent = content;
+            }
         }
 
         messageDiv.appendChild(bubble);
 
+        // Action row under the bubble: copy button, plus token estimate on user
+        // messages and timing/usage on assistant messages.
+        const actionsDiv = document.createElement("div");
+        actionsDiv.className = "message-actions";
+        actionsDiv.appendChild(createCopyButton(content));
+
+        if (role === "user") {
+            const tokensDiv = document.createElement("div");
+            tokensDiv.className = "message-timing";
+            actionsDiv.appendChild(tokensDiv);
+            // Filled in once the real count comes back; stays blank if it fails.
+            fetchTokenCount(content, state.model).then((result) => {
+                tokensDiv.textContent = formatTokenCount(result);
+                tokensDiv.title = tokenCountTitle(result);
+            });
+        }
+
         if (duration !== null && role === "assistant") {
             const timingDiv = document.createElement("div");
             timingDiv.className = "message-timing";
-            timingDiv.textContent = `${parseFloat(duration).toFixed(2)}s`;
-            messageDiv.appendChild(timingDiv);
+            const usageText = formatUsage(usage);
+            timingDiv.textContent =
+                `${parseFloat(duration).toFixed(2)}s` + (usageText ? ` · ${usageText}` : "");
+            actionsDiv.appendChild(timingDiv);
         }
+        messageDiv.appendChild(actionsDiv);
 
         state.chatArea.appendChild(messageDiv);
         state.chatArea.offsetHeight;

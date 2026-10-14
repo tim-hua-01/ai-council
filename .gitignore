@@ -10,4 +10,7 @@ wheels/
 .venv
 .env
 
+# Per-machine model overrides (see config/models.local.example.yaml)
+config/models.local.yaml
+
 notes.txt

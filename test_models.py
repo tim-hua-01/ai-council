@@ -6,7 +6,7 @@ with a system instruction to each model that has an API key configured, and
 checks the model both responds and honours the system message.
 
     python test_models.py                 # test all configured models
-    python test_models.py glm-5.2 chat-latest   # test specific model ids
+    python test_models.py glm-5.3 fable-5.1   # test specific model ids
 """
 
 import asyncio

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from .api_clients import call_model
 from .config import AppConfig, load_config
+from .tokens import count_text_tokens
 
 # API keys are read straight from the environment (os.getenv in app.config).
 # Set OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY before starting.
@@ -26,8 +27,21 @@ from .config import AppConfig, load_config
 # Resolve paths relative to the project root so the server runs from any CWD.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+class NoCacheStaticFiles(StaticFiles):
+    """Static files that browsers must revalidate (ETag => cheap 304) on every load.
+
+    Without a Cache-Control header Chrome heuristically reuses a stale copy of
+    script.js/style.css, so edits don't show up on a normal reload or relaunch.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(title="AI4AIS Multi-Model Comparison Panel")
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 # Loaded once at import. Edit config/models.yaml and restart (or use --reload).
@@ -45,9 +59,23 @@ class ChatRequest(BaseModel):
     panels: list[Panel]
 
 
+class CountRequest(BaseModel):
+    text: str
+    model: str | None = None  # model id; non-Claude (or unknown) ids use a Claude reference
+
+
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # ?v=<mtime> in the asset URLs busts any stale copy the browser cached earlier.
+    def _version(name: str) -> int:
+        return int(os.path.getmtime(os.path.join(BASE_DIR, "static", name)))
+
+    response = templates.TemplateResponse(
+        "index.html",
+        {"request": request, "css_v": _version("style.css"), "js_v": _version("script.js")},
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/api/models")
@@ -99,8 +127,32 @@ async def _run_panel(panel: Panel) -> dict | None:
     return {
         "content": response_data.get("content", ""),
         "thinking": response_data.get("thinking"),
+        "usage": response_data.get("usage"),
         "duration": round(float(duration), 2),
     }
+
+
+@app.post("/api/count_tokens")
+async def count_tokens(request: CountRequest):
+    """Token count for ``text``, via Anthropic's count_tokens API.
+
+    Exact when ``model`` is an Anthropic-backend model; otherwise counted with the
+    first Anthropic model in the config and flagged ``exact: false``.
+    """
+    model = CONFIG.models.get(request.model or "")
+    exact = model is not None and model.backend.type == "anthropic"
+    if not exact:
+        model = next((m for m in CONFIG.models.values() if m.backend.type == "anthropic"), None)
+    if model is None or not model.backend.api_key:
+        return {"error": "No Anthropic model/API key configured for token counting"}
+    try:
+        return {
+            "tokens": await count_text_tokens(model, request.text),
+            "exact": exact,
+            "counted_with": model.label,
+        }
+    except Exception as exc:  # noqa: BLE001 - the badge just stays blank on failure
+        return {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
 
 
 @app.post("/api/chat")

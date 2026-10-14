@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Multi model chatting utility</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ css_v }}">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
@@ -15,7 +15,7 @@
             </div>
             <div class="header-controls">
                 <div class="panel-count-selector">
-                    <label for="panelCount">Panels:</label>
+                    <label for="panelCount">Panels</label>
                     <select id="panelCount">
                         <option value="1">1</option>
                         <option value="2">2</option>
@@ -25,8 +25,8 @@
                         <option value="6" selected>6</option>
                     </select>
                 </div>
-                <button id="systemMessageBtn" class="btn btn-sm" title="Set system message">System Message</button>
-                <button id="newTabBtn" class="btn btn-sm" title="Open new tab">New Tab</button>
+                <button id="systemMessageBtn" class="btn btn-sm btn-secondary" title="Set system message">System Message</button>
+                <button id="newTabBtn" class="btn btn-sm btn-secondary" title="Open new tab">New Tab</button>
             </div>
         </header>
 
@@ -67,12 +67,15 @@
 
         <div class="input-section">
             <div class="global-input-container">
-                <textarea
-                    id="globalInput"
-                    class="global-input"
-                    placeholder="Enter your message here... (Cmd+Enter to send to all, Shift+Enter for newline)"
-                    rows="3"
-                ></textarea>
+                <div class="input-wrap">
+                    <textarea
+                        id="globalInput"
+                        class="global-input"
+                        placeholder="Message all panels…  (⌘/Ctrl+Enter to send, Shift+Enter for newline)"
+                        rows="3"
+                    ></textarea>
+                    <span class="token-count" id="globalTokenCount"</span>
+                </div>
                 <button id="sendAllBtn" class="btn btn-primary btn-lg">Send to All</button>
             </div>
         </div>
@@ -80,6 +83,6 @@
         <div class="status" id="status"></div>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script src="/static/script.js?v={{ js_v }}"></script>
 </body>
 </html>

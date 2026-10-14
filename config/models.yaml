@@ -25,27 +25,47 @@ defaults:
 # -----------------------------------------------------------------------------
 # Backends: where requests go and how reasoning effort is expressed on the wire.
 #   type:            "openai" (OpenAI-compatible /chat/completions) or "anthropic"
-#   base_url:        chat-completions base URL (openai-type only)
-#   api_key_env:     env var holding the API key
+#   base_url:        chat-completions base URL (openai-type only); fallback when
+#                     base_url_env is unset or empty
+#   base_url_env:    optional env var that overrides base_url when set — this is
+#                     how a proxy/gateway gets wired in without touching this file:
+#                     export OPENAI_BASE_URL / OPENROUTER_BASE_URL and requests go
+#                     there instead. The `anthropic` backend needs no such field:
+#                     the Anthropic SDK already reads ANTHROPIC_BASE_URL from the
+#                     environment on its own.
+#   api_key_env:     env var holding the API key (also what a proxy expects its
+#                     token in)
 #   reasoning_style: how a model's effort is encoded for this backend, one of:
 #       effort      -> body["reasoning_effort"] = <effort>      (OpenAI native)
 #       openrouter  -> body["reasoning"] = {"effort": <effort>} (OpenRouter unified)
 #       adaptive    -> Anthropic adaptive thinking + output_config.effort (Opus 4.7/4.8+)
 #       budget      -> Anthropic manual extended thinking via thinking_budget_tokens
 #       none        -> no reasoning params sent
+#   api:             openai-type only: "chat" (default, /chat/completions) or
+#                     "responses" (/responses). Use "responses" for OpenAI models:
+#                     it's the only way to get reasoning summaries back.
 #   max_tokens_param: name of the token-cap field (openai-type only). OpenAI
 #                     reasoning models require "max_completion_tokens"; most
 #                     other providers want "max_tokens".
+#   model_prefix:    optional string prepended to every model_name on this backend
+#                     (for gateways that namespace upstream providers)
 #   extra_headers:   optional headers added to every request to this backend
 # A model may override `reasoning_style` (e.g. an old Anthropic model on "budget").
+#
+# Per-machine overrides: if config/models.local.yaml exists (gitignored) it is merged
+# over this file — extra models, changed fields on existing models (matched by `id`),
+# backend tweaks, and a replacement default_panel_models. See
+# config/models.local.example.yaml.
 # -----------------------------------------------------------------------------
 backends:
   openai:
     type: openai
     base_url: https://api.openai.com/v1
+    base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
+    api: responses                    # /chat/completions never returns reasoning text
     reasoning_style: effort
-    max_tokens_param: max_completion_tokens
+    max_tokens_param: max_completion_tokens   # unused with api: responses (max_output_tokens)
 
   anthropic:
     type: anthropic
@@ -55,6 +75,7 @@ backends:
   openrouter:
     type: openai
     base_url: https://openrouter.ai/api/v1
+    base_url_env: OPENROUTER_BASE_URL
     api_key_env: OPENROUTER_API_KEY
     reasoning_style: openrouter
     max_tokens_param: max_tokens
@@ -74,81 +95,84 @@ backends:
 # "allow_fallbacks": false}}.
 # -----------------------------------------------------------------------------
 models:
-  # --- OpenAI ----------------------------------------------------------------
-  - id: chat-latest
-    label: OpenAI chat-latest
-    backend: openai
-    model_name: chat-latest
-    max_tokens: 32000
-    reasoning_effort: medium
-
-  - id: gpt-5.5
-    label: OpenAI GPT-5.5
-    backend: openai
-    model_name: gpt-5.5
-    reasoning_effort: medium
-
-  - id: gpt-5.2
-    label: OpenAI GPT-5.2
-    backend: openai
-    model_name: gpt-5.2
-    reasoning_effort: medium
-
   # --- Anthropic -------------------------------------------------------------
-  - id: claude-opus-4.8
-    label: Claude 4.8 Opus
+  - id: fable-5.1
+    label: Claude Fable 5.1
     backend: anthropic
-    model_name: claude-opus-4-8
+    model_name: claude-fable-5-1
     reasoning_effort: high          # adaptive thinking
 
-  - id: claude-opus-4.6
-    label: Claude 4.6 Opus
+  - id: fable-5
+    label: Claude Fable 5
     backend: anthropic
-    model_name: claude-opus-4-6
+    model_name: claude-fable-5
     reasoning_effort: high          # adaptive thinking
 
-  - id: claude-sonnet-4.6
-    label: Claude 4.6 Sonnet
-    backend: anthropic
-    model_name: claude-sonnet-4-6
-    reasoning_effort: low           # adaptive thinking
-
-  # --- GLM (via OpenRouter) --------------------------------------------------
-  - id: glm-5.2
-    label: GLM-5.2 (OpenRouter)
-    backend: openrouter
-    model_name: z-ai/glm-5.2
-    max_tokens: 32000
-    reasoning_effort: medium
-    # openrouter_provider: atlas-cloud/fp8   # uncomment to pin a provider
-
-  # --- Moonshot / Kimi (via OpenRouter) --------------------------------------
-  - id: kimi-k2.6
-    label: Kimi K2.6 (OpenRouter)
-    backend: openrouter
-    model_name: moonshotai/kimi-k2.6
-    reasoning_effort: none          # Kimi K2.6 is non-reasoning
-    # openrouter_provider: atlas-cloud/int4
+  # --- OpenAI ----------------------------------------------------------------
+  - id: gpt-6-astra
+    label: OpenAI GPT-6 Astra
+    backend: openai
+    model_name: gpt-6-astra
+    reasoning_effort: high
 
   # --- Gemini (via OpenRouter) -----------------------------------------------
-  - id: gemini-3.1-pro
-    label: Gemini 3.1 Pro
+  - id: gemini-3.8-flash
+    label: Gemini 3.8 Flash
     backend: openrouter
-    model_name: google/gemini-3.1-pro-preview
-    reasoning_effort: medium
+    model_name: google/gemini-3.8-flash
+    reasoning_effort: high
 
-  - id: gemini-3.5-flash
-    label: Gemini 3.5 Flash
+  - id: gemini-4-argon
+    label: Gemini 4 Argon (OpenRouter)
     backend: openrouter
-    model_name: google/gemini-3.5-flash
-    reasoning_effort: minimal
+    model_name: google/gemini-4-argon
+    reasoning_effort: high
+
+  # --- Meta Muse (via OpenRouter) --------------------------------------------
+  - id: muse-wonder
+    label: Muse Wonder (OpenRouter)
+    backend: openrouter
+    model_name: meta/muse-wonder
+    reasoning_effort: high
+
+  # --- Moonshot / Kimi (via OpenRouter) --------------------------------------
+  - id: kimi-k3
+    label: Kimi K3 (OpenRouter)
+    backend: openrouter
+    model_name: moonshotai/kimi-k3
+    reasoning_effort: high
+
+  # --- GLM (via OpenRouter) --------------------------------------------------
+  - id: glm-5.3
+    label: GLM-5.3 (OpenRouter)
+    backend: openrouter
+    model_name: z-ai/glm-5.3
+    max_tokens: 32000
+    reasoning_effort: high
+    # openrouter_provider: atlas-cloud/fp8   # uncomment to pin a provider
+
+  # --- Grok (via OpenRouter) --------------------------------------------------
+  - id: grok-4.6
+    label: Grok 4.6 (OpenRouter)
+    backend: openrouter
+    model_name: x-ai/grok-4.6
+    reasoning_effort: high
+
+  # --- DeepSeek (via OpenRouter) ----------------------------------------------
+  # Not in the default panel lineup below — available in every panel's dropdown
+  # whenever you want it.
+  - id: deepseek-v4-pro
+    label: DeepSeek V4 Pro (OpenRouter)
+    backend: openrouter
+    model_name: deepseek/deepseek-v4-pro
+    reasoning_effort: high
 
 # Which models fill the panels on page load, top to bottom (falls back to the
 # first model if there are more panels than entries). Use the `id`s above.
 default_panel_models:
-  - chat-latest
-  - gpt-5.5
-  - claude-sonnet-4.6
-  - claude-opus-4.8
-  - gemini-3.5-flash
-  - kimi-k2.6
+  - fable-5.1
+  - gpt-6-astra
+  - gemini-3.8-flash
+  - kimi-k3
+  - glm-5.3
+  - grok-4.6

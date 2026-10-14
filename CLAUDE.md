@@ -53,13 +53,24 @@ The project includes a FastAPI-based web application for comparing responses fro
 - **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - loads the model catalog from `/api/models` at runtime; nothing about models is hardcoded.
 
 ### Bundled models
-chat-latest, gpt-5.2 (OpenAI); claude-opus-4.6, claude-opus-4.5 (Anthropic); glm-5.2, kimi-k2.5, gemini-3.1-pro, gemini-3.5-flash (all via OpenRouter). See `config/models.yaml`.
+fable-5.1, fable-5 (Anthropic); gpt-6-astra (OpenAI); gemini-3.8-flash, gemini-4-argon, muse-wonder, kimi-k3, glm-5.3, grok-4.6, deepseek-v4-pro (all via OpenRouter). Only the six in `default_panel_models` populate panels on load — everything else is available from each panel's model dropdown. See `config/models.yaml`.
+
+### Local model overrides
+`config/models.local.yaml` (gitignored, optional) is merged over `config/models.yaml` at startup: extra models, changed fields on existing models (matched by `id`), per-backend tweaks such as `model_prefix`, and a replacement `default_panel_models`. See `config/models.local.example.yaml`. Restart the server after editing — `--reload` only watches `.py` files. Point at a different file with `AI4AIS_LOCAL_CONFIG`.
 
 ### Reasoning effort
 Each model has a default `reasoning_effort`; the UI dropdown overrides it per panel. The wire encoding is set by the backend/model `reasoning_style`: `effort` (OpenAI), `openrouter` (`reasoning: {effort}`), `adaptive` (Anthropic adaptive + `output_config.effort`), `budget` (Anthropic `thinking_budget_tokens`), or `none`.
 
 ### Setup
-API keys are read from the **environment** (no `.env`/dotenv) — set the relevant vars before starting the server. Relevant vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` (GLM/Kimi/Gemini all route through OpenRouter). Override the config path with `AI4AIS_CONFIG`.
+API keys are read from the **environment** (no `.env`/dotenv) — set the relevant vars before starting the server. Relevant vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` (GLM/Kimi/Gemini/Grok/DeepSeek all route through OpenRouter). Override the config path with `AI4AIS_CONFIG`.
+
+To point requests at a proxy or gateway instead of the public APIs, export
+`OPENAI_BASE_URL` and/or `OPENROUTER_BASE_URL` — the `openai`/`openrouter` backends in
+`config/models.yaml` read these at call time via `base_url_env` and use them in place of the
+YAML `base_url` whenever they're set. `ANTHROPIC_BASE_URL` needs no such wiring: the Anthropic
+SDK already picks it up from the environment on its own. If the gateway expects different model
+names, set them in `config/models.local.yaml` (per-model `model_name`, or a backend-wide
+`model_prefix`).
 
 ### Implementation Notes
 - OpenAI-compatible calls use `httpx.AsyncClient`; Anthropic uses the official async SDK.

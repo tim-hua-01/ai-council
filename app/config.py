@@ -24,6 +24,9 @@ ReasoningStyle = Literal["effort", "openrouter", "adaptive", "budget", "none"]
 
 BackendType = Literal["openai", "anthropic"]
 
+# Optional per-machine overrides, merged over the main config if present (gitignored).
+LOCAL_CONFIG_NAME = "models.local.yaml"
+
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models.yaml"
 
 # Sentinel meaning "fall back to the model's configured reasoning_effort".
@@ -38,13 +41,36 @@ class BackendConfig:
     type: BackendType
     api_key_env: str
     reasoning_style: ReasoningStyle = "none"
-    base_url: str | None = None  # required for openai-type backends
+    base_url: str | None = None  # required for openai-type backends; fallback if base_url_env unset
+    base_url_env: str | None = None  # optional env var that overrides base_url (e.g. for a proxy)
     max_tokens_param: str = "max_tokens"
     extra_headers: dict[str, str] = field(default_factory=dict)
+    # Prepended to every model_name on this backend (e.g. a gateway that namespaces
+    # upstream providers as "<provider>/<model>").
+    model_prefix: str = ""
+    # openai-type only: "chat" => /chat/completions, "responses" => /responses
+    # (the only OpenAI endpoint that returns reasoning summaries).
+    api: str = "chat"
 
     @property
     def api_key(self) -> str | None:
         return os.getenv(self.api_key_env)
+
+    @property
+    def resolved_base_url(self) -> str | None:
+        """``base_url``, overridden by ``base_url_env`` when that env var is set.
+
+        Checked at call time (not baked in at config load) so pointing
+        ``OPENAI_BASE_URL``/``OPENROUTER_BASE_URL`` at a proxy or gateway works
+        without touching the YAML. The Anthropic backend needs
+        no equivalent: the ``anthropic`` SDK already reads ``ANTHROPIC_BASE_URL``
+        itself when no explicit ``base_url`` is passed.
+        """
+        if self.base_url_env:
+            env_value = os.getenv(self.base_url_env)
+            if env_value:
+                return env_value
+        return self.base_url
 
 
 @dataclass(frozen=True)
@@ -110,6 +136,36 @@ class AppConfig:
         return summaries
 
 
+def _merge_local(base: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    """Overlay a local (gitignored) config on the base one.
+
+    * ``defaults`` / ``backends.<name>``: field-by-field update.
+    * ``models``: an entry whose ``id`` already exists updates that model's fields
+      in place (e.g. swap its ``model_name``); a new ``id`` is appended.
+    * ``default_panel_models``: replaces the base list when given.
+    """
+    merged = dict(base)
+    merged["defaults"] = {**(base.get("defaults") or {}), **(local.get("defaults") or {})}
+
+    backends = {name: dict(spec) for name, spec in (base.get("backends") or {}).items()}
+    for name, spec in (local.get("backends") or {}).items():
+        backends[name] = {**backends.get(name, {}), **(spec or {})}
+    merged["backends"] = backends
+
+    models = [dict(m) for m in (base.get("models") or [])]
+    index = {m.get("id"): i for i, m in enumerate(models)}
+    for spec in local.get("models") or []:
+        if spec.get("id") in index:
+            models[index[spec["id"]]].update(spec)
+        else:
+            models.append(dict(spec))
+    merged["models"] = models
+
+    if local.get("default_panel_models"):
+        merged["default_panel_models"] = local["default_panel_models"]
+    return merged
+
+
 def _coalesce(*values: Any) -> Any:
     """First non-None value, else None."""
     for value in values:
@@ -129,6 +185,9 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
     raw = yaml.safe_load(config_path.read_text()) or {}
+    local_path = Path(os.getenv("AI4AIS_LOCAL_CONFIG") or config_path.with_name(LOCAL_CONFIG_NAME))
+    if local_path.exists():
+        raw = _merge_local(raw, yaml.safe_load(local_path.read_text()) or {})
     defaults = raw.get("defaults", {}) or {}
 
     backends: dict[str, BackendConfig] = {}
@@ -144,9 +203,14 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
             api_key_env=spec["api_key_env"],
             reasoning_style=spec.get("reasoning_style", "none"),
             base_url=spec.get("base_url"),
+            base_url_env=spec.get("base_url_env"),
             max_tokens_param=spec.get("max_tokens_param", "max_tokens"),
             extra_headers=dict(spec.get("extra_headers") or {}),
+            api=spec.get("api", "chat"),
+            model_prefix=spec.get("model_prefix", "") or "",
         )
+        if backends[name].api not in ("chat", "responses"):
+            raise ValueError(f"Backend {name!r}: api must be 'chat' or 'responses'")
 
     default_timeout = float(defaults.get("timeout", 180))
 
@@ -166,7 +230,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
             id=model_id,
             label=spec.get("label", model_id),
             backend=backend,
-            model_name=spec.get("model_name", model_id),
+            model_name=backend.model_prefix + spec.get("model_name", model_id),
             reasoning_effort=spec.get("reasoning_effort"),
             # A model may override the backend's reasoning style.
             reasoning_style=spec.get("reasoning_style", backend.reasoning_style),

@@ -1,0 +1,29 @@
+# Example per-machine overrides. Copy to config/models.local.yaml (which is
+# gitignored) and edit. It is merged over config/models.yaml at startup:
+#   - backends:  fields are updated per backend name
+#   - models:    an existing `id` has its fields updated; a new `id` is appended
+#   - defaults / default_panel_models: updated / replaced
+# Restart the server after editing (the --reload watcher only sees .py files).
+
+backends:
+  openrouter:
+    # Prepended to every model_name on this backend — handy when a gateway
+    # namespaces upstream providers, e.g. "gateway/".
+    model_prefix: ""
+
+models:
+  # Change how an existing model is called, keeping its panel id and label:
+  - id: fable-5.1
+    model_name: some-other-deployment-name
+
+  # Add a model that isn't in the shared list:
+  - id: my-extra-model
+    label: My Extra Model
+    backend: openrouter
+    model_name: vendor/model-name
+    reasoning_effort: high
+
+# Optionally change which models fill the panels on first load:
+# default_panel_models:
+#   - fable-5.1
+#   - my-extra-model
