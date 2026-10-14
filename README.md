@@ -1,8 +1,7 @@
-# AI4AIS Multi-Model Comparison Panel
+# AI Council
 
-A local web app for comparing responses from multiple LLMs side-by-side. Send the
-same prompt to up to 6 models at once and compare their answers, reasoning, and
-latency.
+Chat with a council of AIs at the same time. Send one prompt to up to 6 models
+side by side and compare their answers, reasoning, and latency.
 
 Everything about *which* models exist and *how* they're called lives in a single
 YAML file — **`config/models.yaml`**. Adding a model or a whole new provider is a
