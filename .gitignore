@@ -12,5 +12,6 @@ wheels/
 
 # Per-machine model overrides (see config/models.local.example.yaml)
 config/models.local.yaml
+app/local_hooks.py
 
 notes.txt

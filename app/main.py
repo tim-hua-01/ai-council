@@ -24,6 +24,13 @@ from .tokens import count_text_tokens
 # API keys are read straight from the environment (os.getenv in app.config).
 # Set OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY before starting.
 
+# Optional per-machine startup hook (gitignored), e.g. to fetch gateway credentials.
+try:
+    from . import local_hooks  # noqa: F401
+except ModuleNotFoundError as e:
+    if e.name != f"{__package__}.local_hooks":
+        raise
+
 # Resolve paths relative to the project root so the server runs from any CWD.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
