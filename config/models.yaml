@@ -115,6 +115,12 @@ models:
     model_name: gpt-6-astra
     reasoning_effort: high
 
+  - id: gpt-6.1-sol
+    label: OpenAI GPT-6.1 Sol
+    backend: openai
+    model_name: gpt-6.1-sol
+    reasoning_effort: high
+
   # --- Gemini (via OpenRouter) -----------------------------------------------
   - id: gemini-3.8-flash
     label: Gemini 3.8 Flash
@@ -152,6 +158,14 @@ models:
     # openrouter_provider: atlas-cloud/fp8   # uncomment to pin a provider
 
   # --- Grok (via OpenRouter) --------------------------------------------------
+  - id: grok-4.7
+    label: Grok 4.7 (OpenRouter)
+    backend: openrouter
+    model_name: x-ai/grok-4.7
+    reasoning_effort: high
+
+  # Superseded by grok-4.7 in the default lineup — still available in every
+  # panel's dropdown.
   - id: grok-4.6
     label: Grok 4.6 (OpenRouter)
     backend: openrouter
@@ -167,6 +181,12 @@ models:
     model_name: deepseek/deepseek-v4-pro
     reasoning_effort: high
 
+  - id: deepseek-v4.1-flash
+    label: DeepSeek V4.1 Flash 1017 (OpenRouter)
+    backend: openrouter
+    model_name: deepseek/deepseek-v4.1-flash-1017
+    reasoning_effort: high
+
 # Which models fill the panels on page load, top to bottom (falls back to the
 # first model if there are more panels than entries). Use the `id`s above.
 default_panel_models:
@@ -175,4 +195,4 @@ default_panel_models:
   - gemini-3.8-flash
   - kimi-k3
   - glm-5.3
-  - grok-4.6
+  - grok-4.7

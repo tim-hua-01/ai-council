@@ -33,10 +33,13 @@ config edit, not a code change.
 | `gemini-3.8-flash` | Google | openrouter | `google/gemini-3.8-flash` | high | yes |
 | `kimi-k3` | Moonshot | openrouter | `moonshotai/kimi-k3` | high | yes |
 | `glm-5.3` | Z.AI | openrouter | `z-ai/glm-5.3` | high | yes |
-| `grok-4.6` | xAI | openrouter | `x-ai/grok-4.6` | high | yes |
+| `grok-4.7` | xAI | openrouter | `x-ai/grok-4.7` | high | yes |
 | `gemini-4-argon` | Google | openrouter | `google/gemini-4-argon` | high | no — pick it from a panel's dropdown |
 | `muse-wonder` | Meta | openrouter | `meta/muse-wonder` | high | no — pick it from a panel's dropdown |
 | `deepseek-v4-pro` | DeepSeek | openrouter | `deepseek/deepseek-v4-pro` | high | no — pick it from a panel's dropdown |
+| `grok-4.6` | xAI | openrouter | `x-ai/grok-4.6` | high | no — pick it from a panel's dropdown |
+| `gpt-6.1-sol` | OpenAI | openai | `gpt-6.1-sol` | high | no — pick it from a panel's dropdown |
+| `deepseek-v4.1-flash` | DeepSeek | openrouter | `deepseek/deepseek-v4.1-flash-1017` | high | no — pick it from a panel's dropdown |
 
 ## Setup & running
 

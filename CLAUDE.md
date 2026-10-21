@@ -53,7 +53,7 @@ The project includes a FastAPI-based web application for comparing responses fro
 - **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - loads the model catalog from `/api/models` at runtime; nothing about models is hardcoded.
 
 ### Bundled models
-fable-5.1, fable-5 (Anthropic); gpt-6-astra (OpenAI); gemini-3.8-flash, gemini-4-argon, muse-wonder, kimi-k3, glm-5.3, grok-4.6, deepseek-v4-pro (all via OpenRouter). Only the six in `default_panel_models` populate panels on load — everything else is available from each panel's model dropdown. See `config/models.yaml`.
+fable-5.1, fable-5 (Anthropic); gpt-6-astra, gpt-6.1-sol (OpenAI); gemini-3.8-flash, gemini-4-argon, muse-wonder, kimi-k3, glm-5.3, grok-4.7, grok-4.6, deepseek-v4-pro, deepseek-v4.1-flash (all via OpenRouter). Only the six in `default_panel_models` populate panels on load — everything else is available from each panel's model dropdown. See `config/models.yaml`.
 
 ### Local model overrides
 `config/models.local.yaml` (gitignored, optional) is merged over `config/models.yaml` at startup: extra models, changed fields on existing models (matched by `id`), per-backend tweaks such as `model_prefix`, and a replacement `default_panel_models`. See `config/models.local.example.yaml`. Restart the server after editing — `--reload` only watches `.py` files. Point at a different file with `AI4AIS_LOCAL_CONFIG`.
