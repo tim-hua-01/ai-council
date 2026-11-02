@@ -26,6 +26,9 @@
                     </select>
                 </div>
                 <button id="systemMessageBtn" class="btn btn-sm btn-secondary" title="Set system message">System Message</button>
+                <button id="incognitoBtn" class="btn btn-sm btn-secondary btn-toggle" title="Incognito: nothing is saved to disk while this is on">Incognito</button>
+                <button id="chatsBtn" class="btn btn-sm btn-secondary" title="Reopen a saved chat">Chats</button>
+                <button id="newChatBtn" class="btn btn-sm btn-secondary" title="Clear every panel and start a new chat (models stay)">New Chat</button>
                 <button id="newTabBtn" class="btn btn-sm btn-secondary" title="Open new tab">New Tab</button>
             </div>
         </header>
@@ -55,6 +58,22 @@
                 </div>
                 <div class="modal-footer">
                     <button id="closeSystemMessageBtnFooter" class="btn">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="chatsModal" class="modal" style="display: none;">
+            <div class="modal-content modal-content-wide">
+                <div class="modal-header">
+                    <h2>Saved chats</h2>
+                    <button class="modal-close" id="closeChatsBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="chats-hint">Every chat is saved automatically after its first message. Reopening one restores all its panels, models, and system messages.</p>
+                    <div id="chatsList" class="chats-list"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="closeChatsBtnFooter" class="btn">Done</button>
                 </div>
             </div>
         </div>

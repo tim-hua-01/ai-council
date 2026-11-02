@@ -49,7 +49,8 @@ The project includes a FastAPI-based web application for comparing responses fro
 - **Config**: `config/models.yaml` - single source of truth for models, backends, and UI defaults.
 - **Config loader**: `app/config.py` - parses the YAML into typed dataclasses (`ModelConfig`, `BackendConfig`, `AppConfig`).
 - **API Clients**: `app/api_clients.py` - two generic handlers, `call_openai_compatible` (httpx) and `call_anthropic` (SDK), with `call_model()` dispatching by backend type.
-- **Backend**: `app/main.py` - FastAPI server. Endpoints: `/api/models`, `/api/config`, `/api/chat`.
+- **Backend**: `app/main.py` - FastAPI server. Endpoints: `/api/models`, `/api/config`, `/api/chat`, `/api/count_tokens`, and `/api/chats` (list/get/put/delete saved chats).
+- **Saved chats**: the frontend autosaves the whole screen (panel count, models, efforts, system messages, per-panel transcripts) to `data/chats/<id>.json` (gitignored; override the directory with `AI4AIS_CHATS_DIR`, and always do so for test runs so real chats are never touched) after every message. The current chat id is kept in `sessionStorage`, so a refresh resumes it and a new tab starts fresh. The header's Incognito toggle (also per tab, in `sessionStorage`) makes `persistChat` a no-op and clears the stored id; turning it off saves the current state. Transcript entries carry `error: true` for failed responses, which are shown but excluded from the messages sent to the model. Each `.message` div in a chat area maps 1:1 to a transcript entry, so Edit/Retry find their index by DOM position, truncate the transcript there, redraw, and resend.
 - **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - loads the model catalog from `/api/models` at runtime; nothing about models is hardcoded.
 
 ### Bundled models

@@ -14,4 +14,7 @@ wheels/
 config/models.local.yaml
 app/local_hooks.py
 
+# Autosaved conversations (see the Chats button in the UI)
+data/chats/
+
 notes.txt

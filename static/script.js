@@ -47,6 +47,317 @@ function savePrefs() {
     }
 }
 
+// ---- Saved chats -------------------------------------------------------------
+// Every conversation is autosaved to the server (data/chats/<id>.json) after each
+// message. The chat id lives in sessionStorage, so a refresh resumes this tab's
+// chat while a new tab starts fresh; older chats come back via the Chats button.
+const CURRENT_CHAT_KEY = "ai4ais.currentChatId";
+const INCOGNITO_KEY = "ai4ais.incognito"; // sessionStorage: per tab, survives a refresh
+let currentChat = null; // {id, title, created_at} once the first message is sent
+let incognito = false; // while on, nothing is written to disk and nothing auto-resumes
+let saveChain = Promise.resolve(); // serializes PUTs so an older snapshot can't land last
+
+function newChatId() {
+    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    return `${stamp}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function chatTitleFrom(text) {
+    const line = (text || "").trim().split("\n")[0].trim();
+    if (!line) return "Untitled chat";
+    return line.length > 60 ? line.slice(0, 57) + "…" : line;
+}
+
+function rememberCurrentChatId(id) {
+    try {
+        if (id) sessionStorage.setItem(CURRENT_CHAT_KEY, id);
+        else sessionStorage.removeItem(CURRENT_CHAT_KEY);
+    } catch (e) {
+        /* sessionStorage unavailable: the chat still saves, it just won't auto-resume */
+    }
+}
+
+// Create the chat record the first time a message is sent. In incognito it exists
+// only in memory (so turning incognito off later can save it from that point).
+function ensureChat(firstMessage) {
+    if (currentChat) return currentChat;
+    currentChat = {
+        id: newChatId(),
+        title: chatTitleFrom(firstMessage),
+        created_at: new Date().toISOString(),
+    };
+    if (!incognito) rememberCurrentChatId(currentChat.id);
+    return currentChat;
+}
+
+// Turning incognito on stops all saving and forgets the tab's chat id, so a refresh
+// starts empty. Turning it off saves the chat as it stands now and resumes autosave.
+function setIncognito(on) {
+    incognito = on;
+    try {
+        if (on) sessionStorage.setItem(INCOGNITO_KEY, "1");
+        else sessionStorage.removeItem(INCOGNITO_KEY);
+    } catch (e) {
+        /* fine: the flag just won't survive a refresh */
+    }
+    document.querySelector(".container").classList.toggle("incognito", on);
+    const btn = document.getElementById("incognitoBtn");
+    btn.classList.toggle("active", on);
+    btn.textContent = on ? "Incognito: on" : "Incognito";
+    btn.title = on
+        ? "Nothing is being saved. Click to turn saving back on (the chat as it stands now gets saved)."
+        : "Incognito: nothing is saved to disk while this is on";
+    if (on) {
+        rememberCurrentChatId(null);
+    } else if (currentChat) {
+        rememberCurrentChatId(currentChat.id);
+        persistChat();
+    }
+}
+
+// Everything needed to rebuild this screen later: layout, models, system
+// messages, and each panel's transcript (what was shown, including errors).
+function snapshotChat() {
+    return {
+        id: currentChat ? currentChat.id : null,
+        title: currentChat ? currentChat.title : null,
+        created_at: currentChat ? currentChat.created_at : null,
+        updated_at: new Date().toISOString(),
+        panel_count: currentPanelCount,
+        global_system_message: globalSystemMessage,
+        panels: panelStates.map((s) => ({
+            model: s.model,
+            effort: s.reasoningEffort,
+            system_message: s.systemMessage || "",
+            transcript: s.transcript,
+        })),
+    };
+}
+
+function persistChat() {
+    if (!currentChat || incognito) return;
+    saveChain = saveChain
+        .then(async () => {
+            const res = await fetch(`/api/chats/${currentChat.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(snapshotChat()),
+            });
+            if (!res.ok) console.warn("Could not save chat:", res.status, await res.text());
+        })
+        .catch((e) => console.warn("Could not save chat:", e));
+}
+
+// The API-facing message list is derived from the transcript: the active system
+// message first, then every non-error user/assistant turn.
+function rebuildMessages(state) {
+    const sys = state.systemMessage || globalSystemMessage;
+    state.messages = [
+        ...(sys ? [{ role: "system", content: sys }] : []),
+        ...state.transcript
+            .filter((e) => !e.error)
+            .map((e) => ({ role: e.role, content: e.content })),
+    ];
+}
+
+// Append one turn to a panel: transcript (for saving/restoring), the API message
+// list (unless it's an error), the screen, and the autosave.
+function recordMessage(panelIndex, entry) {
+    const state = panelStates[panelIndex];
+    state.transcript.push(entry);
+    if (!entry.error) state.messages.push({ role: entry.role, content: entry.content });
+    displayMessage(
+        panelIndex, entry.role, entry.content,
+        entry.duration ?? null, entry.thinking ?? null, entry.usage ?? null,
+    );
+    persistChat();
+}
+
+// Rebuild the whole screen from a chat object (saved or freshly snapshotted).
+function restoreChat(chat) {
+    currentChat = chat.id ? { id: chat.id, title: chat.title, created_at: chat.created_at } : null;
+    rememberCurrentChatId(!incognito && currentChat ? currentChat.id : null);
+    globalSystemMessage = chat.global_system_message || "";
+    document.getElementById("globalSystemMessage").value = globalSystemMessage;
+    const count = Math.min(6, Math.max(1, parseInt(chat.panel_count) || currentPanelCount || 1));
+    document.getElementById("panelCount").value = String(count);
+    initializePanels(count, chat.panels || []);
+}
+
+function anyRequestInFlight() {
+    return globalRequestInProgress || panelStates.some((s) => s.isRequesting);
+}
+
+// Clear every transcript but keep the layout, models, and system messages.
+function startNewChat() {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    const snap = snapshotChat();
+    snap.id = null;
+    snap.panels.forEach((p) => (p.transcript = []));
+    restoreChat(snap);
+}
+
+// ---- Edit & resample -------------------------------------------------------------
+// Each .message div in a chat area corresponds 1:1 to a transcript entry, so a
+// message's position in the DOM is its transcript index.
+
+function transcriptIndexOf(panelIndex, messageDiv) {
+    return Array.from(panelStates[panelIndex].chatArea.children).indexOf(messageDiv);
+}
+
+// Redraw a panel's chat area from its transcript (after truncating it).
+function renderTranscript(panelIndex) {
+    const state = panelStates[panelIndex];
+    state.chatArea.innerHTML = "";
+    for (const entry of state.transcript) {
+        displayMessage(
+            panelIndex, entry.role, entry.content,
+            entry.duration ?? null, entry.thinking ?? null, entry.usage ?? null,
+        );
+    }
+}
+
+// Drop transcript entries from `index` on and redraw. The API message list follows.
+function truncateTranscript(panelIndex, index) {
+    const state = panelStates[panelIndex];
+    state.transcript.length = Math.max(0, index);
+    renderTranscript(panelIndex);
+    rebuildMessages(state);
+}
+
+function panelRequestSpec(enabledIndexes) {
+    return panelStates.map((s, idx) => ({
+        model: s.model,
+        messages: s.messages,
+        enabled: enabledIndexes.includes(idx),
+        reasoning_effort: s.reasoningEffort,
+    }));
+}
+
+// Replace the user message at `index` in one panel and ask the model again from there.
+async function resendEditedMessage(panelIndex, index, newContent) {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    truncateTranscript(panelIndex, index);
+    ensureChat(newContent);
+    recordMessage(panelIndex, { role: "user", content: newContent });
+    await sendRequestStreaming(panelRequestSpec([panelIndex]), false, panelIndex);
+}
+
+// Same, but in every panel that has that user message: each panel is cut at its
+// own last copy of `original` (side conversations can put it at different depths).
+async function resendEditedMessageToAll(original, newContent) {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    const targets = [];
+    panelStates.forEach((s, i) => {
+        const idx = s.transcript.map((e) => e.role === "user" && e.content === original).lastIndexOf(true);
+        if (idx !== -1) targets.push([i, idx]);
+    });
+    if (!targets.length) return;
+    ensureChat(newContent);
+    for (const [i, idx] of targets) {
+        truncateTranscript(i, idx);
+        recordMessage(i, { role: "user", content: newContent });
+    }
+    await sendRequestStreaming(panelRequestSpec(targets.map(([i]) => i)), true);
+}
+
+// Throw away the assistant reply at `index` (and anything after) and sample again.
+async function retryFrom(panelIndex, index) {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    truncateTranscript(panelIndex, index);
+    persistChat();
+    await sendRequestStreaming(panelRequestSpec([panelIndex]), false, panelIndex);
+}
+
+// Swap a user bubble for an inline editor with resend buttons.
+function startEditMessage(panelIndex, messageDiv, original) {
+    if (messageDiv.classList.contains("editing")) return;
+    messageDiv.classList.add("editing");
+
+    const editor = document.createElement("div");
+    editor.className = "message-editor";
+    const ta = document.createElement("textarea");
+    ta.className = "message-edit-input";
+    ta.value = original;
+    ta.rows = Math.min(14, Math.max(3, original.split("\n").length + 1));
+    const actions = document.createElement("div");
+    actions.className = "message-editor-actions";
+
+    const close = () => {
+        editor.remove();
+        messageDiv.classList.remove("editing");
+    };
+    const hereBtn = document.createElement("button");
+    hereBtn.className = "btn btn-primary btn-sm";
+    hereBtn.textContent = "Resend here";
+    hereBtn.title = "Replace this message in this panel and ask the model again (⌘/Ctrl+Enter)";
+    hereBtn.addEventListener("click", () => {
+        const text = ta.value.trim();
+        if (!text) return;
+        const index = transcriptIndexOf(panelIndex, messageDiv);
+        close();
+        resendEditedMessage(panelIndex, index, text);
+    });
+    actions.appendChild(hereBtn);
+
+    if (panelStates.length > 1) {
+        const allBtn = document.createElement("button");
+        allBtn.className = "btn btn-sm";
+        allBtn.textContent = "Resend to all panels";
+        allBtn.title = "Replace this message in every panel that has it and ask all those models again";
+        allBtn.addEventListener("click", () => {
+            const text = ta.value.trim();
+            if (!text) return;
+            close();
+            resendEditedMessageToAll(original, text);
+        });
+        actions.appendChild(allBtn);
+    }
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn-sm";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", close);
+    actions.appendChild(cancelBtn);
+
+    ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            hereBtn.click();
+        } else if (e.key === "Escape") {
+            e.stopPropagation();
+            close();
+        }
+    });
+
+    editor.appendChild(ta);
+    editor.appendChild(actions);
+    messageDiv.appendChild(editor);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+async function fetchChat(id) {
+    try {
+        const res = await fetch(`/api/chats/${encodeURIComponent(id)}`);
+        return res.ok ? await res.json() : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 // Real token counts from the server (/api/count_tokens → Anthropic's count_tokens API).
 // Exact for Claude models; for any other model it's counted with Claude's tokenizer and
 // flagged `exact: false`, so we show it with a "≈". Returns null if the count failed.
@@ -116,10 +427,23 @@ function clearInput(textarea) {
 document.addEventListener("DOMContentLoaded", async () => {
     await loadConfig();
     const panelCountSelect = document.getElementById("panelCount");
-    const savedCount = parseInt(loadPrefs().count);
-    const count = savedCount >= 1 && savedCount <= 6 ? savedCount : DEFAULT_PANEL_COUNT;
-    panelCountSelect.value = String(count);
-    initializePanels(count);
+    let resumed = null;
+    try {
+        if (sessionStorage.getItem(INCOGNITO_KEY)) setIncognito(true);
+        const id = sessionStorage.getItem(CURRENT_CHAT_KEY);
+        if (id && !incognito) resumed = await fetchChat(id);
+    } catch (e) {
+        resumed = null;
+    }
+    if (resumed) {
+        restoreChat(resumed);
+    } else {
+        rememberCurrentChatId(null);
+        const savedCount = parseInt(loadPrefs().count);
+        const count = savedCount >= 1 && savedCount <= 6 ? savedCount : DEFAULT_PANEL_COUNT;
+        panelCountSelect.value = String(count);
+        initializePanels(count);
+    }
     setupEventListeners();
 });
 
@@ -166,17 +490,19 @@ function effortOptionsHtml(modelId, selectedEffort) {
     const sel = selectedEffort || "default";
     return options
         .map((e) => {
-            // The closed select shows the selected label, so spell out "reasoning: X".
+            // The closed select shows the selected label, so spell out "effort: X".
             const label =
                 e === "default"
-                    ? `reasoning: ${(m && m.reasoning_effort) || "none"} (default)`
-                    : `reasoning: ${e}`;
+                    ? `effort: ${(m && m.reasoning_effort) || "none"} (default)`
+                    : `effort: ${e}`;
             return `<option value="${e}" ${e === sel ? "selected" : ""}>${label}</option>`;
         })
         .join("");
 }
 
-function initializePanels(count) {
+// `chatPanels` (optional) are saved panel specs {model, effort, system_message,
+// transcript}; panels without one fall back to the last-used prefs / config defaults.
+function initializePanels(count, chatPanels = []) {
     const panelsGrid = document.getElementById("panelsGrid");
     panelsGrid.innerHTML = "";
     panelStates = [];
@@ -189,8 +515,9 @@ function initializePanels(count) {
     const savedPanels = loadPrefs().panels || [];
 
     for (let i = 0; i < count; i++) {
-        // Prefer the last-used model/effort if it still exists in the config.
-        const saved = savedPanels[i] || {};
+        // Prefer the chat's model/effort, then the last-used one, if it still exists.
+        const spec = chatPanels[i] || null;
+        const saved = (spec && MODELS_BY_ID[spec.model]) ? spec : (savedPanels[i] || {});
         const model = MODELS_BY_ID[saved.model]
             ? saved.model
             : DEFAULT_PANEL_MODELS[i] || DEFAULT_PANEL_MODELS[0] || fallbackModel;
@@ -211,7 +538,8 @@ function initializePanels(count) {
             modelSelect: panel.querySelector(".panel-model-select"),
             effortSelect: panel.querySelector(".panel-effort-select"),
             isRequesting: false,
-            systemMessage: "",
+            systemMessage: (spec && spec.system_message) || "",
+            transcript: [],
         };
 
         bindTokenCounter(panelStates[i].input, panel.querySelector(".token-count"), () => panelStates[i].model);
@@ -228,6 +556,7 @@ function initializePanels(count) {
             panelStates[i].reasoningEffort = "default";
             panelStates[i].effortSelect.innerHTML = effortOptionsHtml(e.target.value, "default");
             savePrefs();
+            persistChat();
             // The tokenizer depends on the model, so recount what's typed.
             panelStates[i].input.dispatchEvent(new Event("input"));
             refreshGlobalTokenCount();
@@ -235,9 +564,25 @@ function initializePanels(count) {
         panelStates[i].effortSelect.addEventListener("change", (e) => {
             panelStates[i].reasoningEffort = e.target.value;
             savePrefs();
+            persistChat();
         });
         panelStates[i].resetBtn.addEventListener("click", () => resetPanelChat(i));
+        panel.querySelector(".panel-reply-toggle").addEventListener("click", () => {
+            setPanelReplyOpen(i, !panel.classList.contains("reply-open"));
+        });
         panel.querySelector(".panel-focus-btn").addEventListener("click", () => togglePanelFocus(i));
+
+        // Replay a saved transcript, then derive the API message list from it.
+        if (spec && Array.isArray(spec.transcript)) {
+            for (const entry of spec.transcript) {
+                panelStates[i].transcript.push(entry);
+                displayMessage(
+                    i, entry.role, entry.content,
+                    entry.duration ?? null, entry.thinking ?? null, entry.usage ?? null,
+                );
+            }
+        }
+        rebuildMessages(panelStates[i]);
     }
 
     savePrefs();
@@ -276,6 +621,14 @@ function togglePanelFocus(index) {
     setPanelFocus(focusedPanelIndex() === index ? null : index);
 }
 
+// Show or hide a panel's "message this model only" box. It starts collapsed so the
+// chat area gets the space; opening it focuses the textarea.
+function setPanelReplyOpen(index, open) {
+    const state = panelStates[index];
+    state.element.classList.toggle("reply-open", open);
+    if (open) state.input.focus();
+}
+
 function createPanel(index, model, effort = "default") {
     const panel = document.createElement("div");
     panel.className = "panel";
@@ -297,17 +650,24 @@ function createPanel(index, model, effort = "default") {
         </div>
         <div class="chat-area"></div>
         <div class="panel-footer">
-            <div class="input-wrap">
-                <textarea
-                    class="panel-input"
-                    placeholder="Send to this model only…"
-                    rows="2"
-                ></textarea>
-                <span class="token-count"></span>
-            </div>
-            <div class="panel-input-actions">
+            <div class="panel-footer-bar">
+                <button type="button" class="panel-reply-toggle" title="Message this model only">
+                    <span class="panel-reply-toggle-icon">▶</span>Message this model only
+                </button>
                 <button class="btn btn-sm panel-reset-btn" title="Clear this panel's chat">Reset</button>
-                <button class="btn btn-primary btn-sm panel-send-btn">Send</button>
+            </div>
+            <div class="panel-reply">
+                <div class="input-wrap">
+                    <textarea
+                        class="panel-input"
+                        placeholder="Send to this model only…"
+                        rows="2"
+                    ></textarea>
+                    <span class="token-count"></span>
+                </div>
+                <div class="panel-input-actions">
+                    <button class="btn btn-primary btn-sm panel-send-btn">Send</button>
+                </div>
             </div>
         </div>
     `;
@@ -340,10 +700,26 @@ function setupEventListeners() {
         }
     });
     panelCountSelect.addEventListener("change", (e) => {
-        initializePanels(parseInt(e.target.value));
+        // Rebuild from a snapshot so existing panels keep their conversations.
+        const snap = snapshotChat();
+        snap.panel_count = parseInt(e.target.value);
+        restoreChat(snap);
+        persistChat();
     });
     newTabBtn.addEventListener("click", () => {
         window.open(window.location.href, "_blank");
+    });
+    document.getElementById("newChatBtn").addEventListener("click", startNewChat);
+    document.getElementById("incognitoBtn").addEventListener("click", () => setIncognito(!incognito));
+
+    // Saved chats modal
+    const chatsModal = document.getElementById("chatsModal");
+    const closeChats = () => (chatsModal.style.display = "none");
+    document.getElementById("chatsBtn").addEventListener("click", openChatsModal);
+    document.getElementById("closeChatsBtn").addEventListener("click", closeChats);
+    document.getElementById("closeChatsBtnFooter").addEventListener("click", closeChats);
+    chatsModal.addEventListener("click", (e) => {
+        if (e.target === chatsModal) closeChats();
     });
 
     // System Message modal
@@ -364,6 +740,7 @@ function setupEventListeners() {
 
     const closeModal = () => {
         saveSystemMessages();
+        persistChat();
         systemMessageModal.style.display = "none";
     };
     closeSystemMessageBtn.addEventListener("click", closeModal);
@@ -410,6 +787,8 @@ function setupEventListeners() {
         const newHeight = Math.max(200, startHeight + deltaY);
         panelsGrid.style.height = newHeight + "px";
         panelsGrid.style.flex = "0 0 auto";
+        // The grid is now fixed-height, so let the shared input absorb the rest.
+        document.querySelector(".container").classList.add("input-resized");
     });
 
     document.addEventListener("mouseup", () => {
@@ -420,9 +799,124 @@ function setupEventListeners() {
 }
 
 function resetPanelChat(panelIndex) {
-    panelStates[panelIndex].messages = [];
+    panelStates[panelIndex].transcript = [];
+    rebuildMessages(panelStates[panelIndex]); // keeps the system message, drops the turns
     panelStates[panelIndex].chatArea.innerHTML = "";
     clearInput(panelStates[panelIndex].input);
+    persistChat();
+}
+
+// ---- Chats modal ---------------------------------------------------------------
+
+function fmtChatDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function openChatsModal() {
+    const modal = document.getElementById("chatsModal");
+    const list = document.getElementById("chatsList");
+    modal.style.display = "flex";
+    list.innerHTML = '<div class="chats-empty">Loading…</div>';
+    let chats = [];
+    try {
+        const res = await fetch("/api/chats");
+        chats = (await res.json()).chats || [];
+    } catch (e) {
+        list.innerHTML = '<div class="chats-empty">Could not load saved chats.</div>';
+        return;
+    }
+    renderChatsList(chats);
+}
+
+function renderChatsList(chats) {
+    const list = document.getElementById("chatsList");
+    list.innerHTML = "";
+    if (!chats.length) {
+        list.innerHTML = '<div class="chats-empty">No saved chats yet.</div>';
+        return;
+    }
+    for (const chat of chats) {
+        const item = document.createElement("div");
+        item.className = "chat-item" + (currentChat && chat.id === currentChat.id ? " current" : "");
+
+        const main = document.createElement("div");
+        main.className = "chat-item-main";
+        const title = document.createElement("div");
+        title.className = "chat-item-title";
+        title.textContent = chat.title || "Untitled chat";
+        const meta = document.createElement("div");
+        meta.className = "chat-item-meta";
+        const models = (chat.models || []).map((m) => modelLabel(m)).join(", ");
+        meta.textContent = `${fmtChatDate(chat.updated_at)} · ${chat.message_count} messages · ${models}`;
+        meta.title = models;
+        main.appendChild(title);
+        main.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "chat-item-actions";
+        const openBtn = document.createElement("button");
+        openBtn.className = "btn btn-primary";
+        openBtn.textContent = "Open";
+        openBtn.addEventListener("click", () => openSavedChat(chat.id));
+        const renameBtn = document.createElement("button");
+        renameBtn.className = "btn";
+        renameBtn.textContent = "Rename";
+        renameBtn.addEventListener("click", () => renameSavedChat(chat));
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "btn";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", () => deleteSavedChat(chat));
+        actions.appendChild(openBtn);
+        actions.appendChild(renameBtn);
+        actions.appendChild(deleteBtn);
+
+        item.appendChild(main);
+        item.appendChild(actions);
+        list.appendChild(item);
+    }
+}
+
+async function openSavedChat(id) {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    const chat = await fetchChat(id);
+    if (!chat) {
+        alert("That chat could not be loaded.");
+        return;
+    }
+    restoreChat(chat);
+    document.getElementById("chatsModal").style.display = "none";
+}
+
+async function renameSavedChat(summary) {
+    const title = prompt("Chat title:", summary.title || "");
+    if (title === null) return;
+    const chat = await fetchChat(summary.id);
+    if (!chat) return;
+    chat.title = title.trim() || "Untitled chat";
+    if (currentChat && currentChat.id === chat.id) currentChat.title = chat.title;
+    await fetch(`/api/chats/${encodeURIComponent(chat.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chat),
+    });
+    openChatsModal();
+}
+
+async function deleteSavedChat(summary) {
+    if (!confirm(`Delete "${summary.title}"? This cannot be undone.`)) return;
+    await fetch(`/api/chats/${encodeURIComponent(summary.id)}`, { method: "DELETE" });
+    if (currentChat && currentChat.id === summary.id) {
+        // What's on screen stays; the next message starts a fresh record.
+        currentChat = null;
+        rememberCurrentChatId(null);
+    }
+    openChatsModal();
 }
 
 function updatePanelSystemSelectDropdown() {
@@ -495,9 +989,9 @@ async function sendToAllModels() {
         return;
     }
 
+    ensureChat(message);
     for (let i = 0; i < panelStates.length; i++) {
-        panelStates[i].messages.push({ role: "user", content: message });
-        displayMessage(i, "user", message);
+        recordMessage(i, { role: "user", content: message });
     }
 
     clearInput(globalInput);
@@ -520,18 +1014,12 @@ async function sendToPanelMessage(panelIndex) {
     const message = state.input.value.trim();
     if (!message) return;
 
-    state.messages.push({ role: "user", content: message });
-    displayMessage(panelIndex, "user", message);
+    ensureChat(message);
+    recordMessage(panelIndex, { role: "user", content: message });
     clearInput(state.input);
+    setPanelReplyOpen(panelIndex, false); // give the reply room back to the chat
 
-    const panels = panelStates.map((s, idx) => ({
-        model: s.model,
-        messages: s.messages,
-        enabled: idx === panelIndex,
-        reasoning_effort: s.reasoningEffort,
-    }));
-
-    await sendRequestStreaming(panels, false, panelIndex);
+    await sendRequestStreaming(panelRequestSpec([panelIndex]), false, panelIndex);
 }
 
 async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null) {
@@ -575,25 +1063,25 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
 
                     if (typeof result !== "object" || !("content" in result)) {
                         console.error(`Invalid result format for panel ${idx}:`, result);
-                        displayMessage(idx, "assistant", "Error: Invalid response from server", 0, null);
+                        recordMessage(idx, {
+                            role: "assistant", content: "Error: Invalid response from server", duration: 0, error: true,
+                        });
                         return;
                     }
 
-                    const content = result.content;
-                    const duration = result.duration || 0;
-                    const thinking = result.thinking || null;
-                    const usage = result.usage || null;
-
-                    if (content.startsWith("Error:")) {
-                        displayMessage(idx, "assistant", content, duration, thinking, usage);
-                    } else {
-                        panelStates[idx].messages.push({ role: "assistant", content: content });
-                        displayMessage(idx, "assistant", content, duration, thinking, usage);
-                    }
+                    const content = String(result.content);
+                    recordMessage(idx, {
+                        role: "assistant",
+                        content: content,
+                        duration: result.duration || 0,
+                        thinking: result.thinking || null,
+                        usage: result.usage || null,
+                        error: content.startsWith("Error:"), // errors show but aren't sent back to the model
+                    });
                 })
                 .catch((error) => {
                     console.error(`Error for panel ${idx}:`, error);
-                    displayMessage(idx, "assistant", `Error: ${error.message}`, 0, null);
+                    recordMessage(idx, { role: "assistant", content: `Error: ${error.message}`, duration: 0, error: true });
                 });
         });
 
@@ -647,6 +1135,32 @@ async function copyText(text) {
 }
 
 // Small "Copy" button that copies the raw message text (markdown source, not rendered HTML).
+// Long messages get a Collapse/Expand button so a pasted transcript or a long answer
+// doesn't push everything else out of view. Short ones don't need it.
+const COLLAPSIBLE_MIN_CHARS = 600;
+const COLLAPSIBLE_MIN_LINES = 8;
+
+function isLongMessage(text) {
+    return text.length > COLLAPSIBLE_MIN_CHARS || text.split("\n").length > COLLAPSIBLE_MIN_LINES;
+}
+
+function createCollapseButton(bubble) {
+    const btn = document.createElement("button");
+    btn.className = "message-collapse-btn";
+    btn.type = "button";
+    const render = () => {
+        const collapsed = bubble.classList.contains("collapsed");
+        btn.textContent = collapsed ? "Expand" : "Collapse";
+        btn.title = collapsed ? "Show the whole message" : "Show only the first few lines";
+    };
+    btn.addEventListener("click", () => {
+        bubble.classList.toggle("collapsed");
+        render();
+    });
+    render();
+    return btn;
+}
+
 function createCopyButton(text) {
     const btn = document.createElement("button");
     btn.className = "message-copy-btn";
@@ -769,6 +1283,24 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
         const actionsDiv = document.createElement("div");
         actionsDiv.className = "message-actions";
         actionsDiv.appendChild(createCopyButton(content));
+        if (isLongMessage(content)) actionsDiv.appendChild(createCollapseButton(bubble));
+        if (role === "user") {
+            const editBtn = document.createElement("button");
+            editBtn.className = "message-edit-btn";
+            editBtn.type = "button";
+            editBtn.textContent = "Edit";
+            editBtn.title = "Edit this message and ask again from here (later turns are discarded)";
+            editBtn.addEventListener("click", () => startEditMessage(panelIndex, messageDiv, content));
+            actionsDiv.appendChild(editBtn);
+        } else {
+            const retryBtn = document.createElement("button");
+            retryBtn.className = "message-retry-btn";
+            retryBtn.type = "button";
+            retryBtn.textContent = "Retry";
+            retryBtn.title = "Discard this reply (and anything after it) and sample again";
+            retryBtn.addEventListener("click", () => retryFrom(panelIndex, transcriptIndexOf(panelIndex, messageDiv)));
+            actionsDiv.appendChild(retryBtn);
+        }
 
         if (role === "user") {
             const tokensDiv = document.createElement("div");

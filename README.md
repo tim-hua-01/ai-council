@@ -23,6 +23,14 @@ config edit, not a code change.
 - **Extended thinking / reasoning** shown in a collapsible dropdown per response.
 - **System messages** — global (all panels) or per-panel.
 - **Markdown rendering**, response timing, parallel requests.
+- **Saved chats**: every conversation is autosaved to `data/chats/` (or `AI4AIS_CHATS_DIR`) after each
+  message. A refresh resumes the tab's chat; the **Chats** button reopens,
+  renames, or deletes past ones; **New Chat** clears the panels but keeps the
+  models and system messages. **Incognito** (header toggle) stops all saving for
+  that tab until you turn it off, at which point the chat is saved as it stands.
+- **Edit & resample**: *Edit* on any user message rewrites it and asks again from
+  that point (in that panel, or in every panel that has the same message); *Retry*
+  on any reply discards it and samples again. Later turns are dropped either way.
 
 ## Bundled models
 
@@ -138,7 +146,7 @@ An effort of `none`/`default` (or empty) sends no reasoning parameter.
 app/
   config.py        # YAML -> typed dataclasses (models, backends, defaults)
   api_clients.py   # generic handlers: call_openai_compatible / call_anthropic
-  main.py          # FastAPI: /api/models, /api/config, /api/chat
+  main.py          # FastAPI: /api/models, /api/config, /api/chat, /api/chats
 config/
   models.yaml      # the single source of truth for models & providers
 static/            # script.js, style.css (vanilla JS frontend)

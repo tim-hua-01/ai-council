@@ -42,21 +42,21 @@ body {
         172deg, rgba(120, 85, 35, 0.06) 0, rgba(120, 85, 35, 0.06) 1px, transparent 1px, transparent 9px);
     color: var(--ink);
     min-height: 100vh;
-    padding: 14px;
+    padding: 10px 12px 12px;
     -webkit-font-smoothing: antialiased;
 }
 
 .container {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 28px);
+    height: calc(100vh - 22px);
     position: relative;
 }
 
 /* ---- Header ---------------------------------------------------------------- */
 
 .header {
-    padding: 2px 4px 12px;
+    padding: 0 4px 8px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -69,7 +69,7 @@ body {
 }
 
 .header h1 {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     font-weight: 700;
     letter-spacing: 0.16em;
     text-transform: uppercase;
@@ -220,9 +220,9 @@ textarea::placeholder {
 .panels-grid.grid-1 { grid-template-columns: 1fr; }
 .panels-grid.grid-2 { grid-template-columns: repeat(2, 1fr); }
 .panels-grid.grid-3 { grid-template-columns: repeat(3, 1fr); }
-.panels-grid.grid-4 { grid-template-columns: repeat(2, 1fr); }
+.panels-grid.grid-4 { grid-template-columns: repeat(4, 1fr); }
 .panels-grid.grid-5 { grid-template-columns: repeat(5, 1fr); }
-.panels-grid.grid-6 { grid-template-columns: repeat(3, 1fr); }
+.panels-grid.grid-6 { grid-template-columns: repeat(6, 1fr); }
 
 .main-resize-handle {
     height: 14px;
@@ -259,7 +259,7 @@ textarea::placeholder {
 }
 
 .panel-header {
-    padding: 9px 12px;
+    padding: 6px 10px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
 }
@@ -267,13 +267,11 @@ textarea::placeholder {
 .panel-title-wrapper {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 6px 8px;
+    gap: 6px;
 }
 
 .panel-model-group {
-    flex: 1 1 100%;   /* the model name gets the whole row */
+    flex: 1 1 0;      /* the model name takes whatever the other controls leave */
     min-width: 0;
     display: flex;
     align-items: center;
@@ -282,7 +280,6 @@ textarea::placeholder {
 
 .panel-focus-btn {
     flex: 0 0 auto;
-    margin-left: auto;   /* right end of the reasoning row */
     width: 26px;
     height: 24px;
     display: inline-flex;
@@ -316,13 +313,14 @@ textarea::placeholder {
     width: 100%;
     font-size: 0.85rem;
     font-weight: 600;
-    padding: 6px 26px 6px 10px;
+    padding: 4px 24px 4px 8px;
     text-overflow: ellipsis;
 }
 
 .panel-effort-select {
     flex: 0 1 auto;
-    min-width: 0;        /* may shrink (ellipsis) so the focus button stays on this row */
+    min-width: 0;        /* may shrink (ellipsis) so everything stays on one row */
+    max-width: 42%;
     font-size: 0.72rem;
     padding: 3px 22px 3px 8px;
     white-space: nowrap;
@@ -384,6 +382,63 @@ textarea::placeholder {
     box-shadow: var(--shadow-sm);
 }
 
+/* A collapsed bubble shows roughly its first four lines, fading out at the bottom. */
+.message-bubble.collapsed {
+    max-height: 6.2em;
+    overflow: hidden;
+    position: relative;
+}
+
+.message-bubble.collapsed::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.4em;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--surface));
+}
+
+.message.user .message-bubble.collapsed::after {
+    background: linear-gradient(to bottom, transparent, var(--accent-soft));
+}
+
+/* Inline editor that replaces a user bubble while it's being edited. */
+.message.editing .message-bubble,
+.message.editing .message-actions {
+    display: none;
+}
+
+.message-editor {
+    width: 94%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.message-edit-input {
+    width: 100%;
+    padding: 8px 11px;
+    border: 1px solid var(--accent);
+    border-radius: 0;
+    background: var(--surface);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    resize: vertical;
+    box-shadow: var(--ring);
+}
+
+.message-edit-input:focus {
+    outline: none;
+}
+
+.message-editor-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
 /* Row under each bubble: copy button, token estimate / timing + usage. */
 .message-actions {
     display: flex;
@@ -397,7 +452,10 @@ textarea::placeholder {
     flex-direction: row-reverse;
 }
 
-.message-copy-btn {
+.message-copy-btn,
+.message-collapse-btn,
+.message-edit-btn,
+.message-retry-btn {
     font-family: inherit;
     font-size: 0.72rem;
     color: var(--muted);
@@ -409,7 +467,10 @@ textarea::placeholder {
     transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
-.message-copy-btn:hover {
+.message-copy-btn:hover,
+.message-collapse-btn:hover,
+.message-edit-btn:hover,
+.message-retry-btn:hover {
     color: var(--ink);
     border-color: var(--border-strong);
     background: var(--surface);
@@ -604,7 +665,7 @@ textarea::placeholder {
 /* ---- Inputs ---------------------------------------------------------------- */
 
 .panel-footer {
-    padding: 8px 10px 10px;
+    padding: 4px 10px;
     border-top: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
@@ -613,16 +674,65 @@ textarea::placeholder {
     gap: 6px;
 }
 
+/* Slim always-visible row: the reply toggle on the left, quiet Reset on the right. */
+.panel-footer-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.panel-reply-toggle {
+    font-family: inherit;
+    font-size: 0.76rem;
+    font-weight: 500;
+    color: var(--muted);
+    background: none;
+    border: 1px solid transparent;
+    padding: 3px 6px 3px 2px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s;
+}
+
+.panel-reply-toggle:hover {
+    color: var(--accent);
+}
+
+.panel-reply-toggle-icon {
+    font-size: 0.6rem;
+    display: inline-block;
+    transition: transform 0.15s;
+}
+
+.panel.reply-open .panel-reply-toggle-icon {
+    transform: rotate(90deg);
+}
+
+/* The text box and Send row only exist while the toggle is open. */
+.panel-reply {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 4px;
+}
+
+.panel.reply-open .panel-reply {
+    display: flex;
+}
+
 /* In the stacked footer the text box keeps its natural height (the row-layout
    flex-basis used by the shared input would otherwise stretch it vertically). */
 .panel-footer .input-wrap {
     flex: 0 0 auto;
 }
 
-/* Slim row under the text box: quiet Reset on the left, compact Send on the right. */
+/* Row under the text box: compact Send on the right. */
 .panel-input-actions {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
 }
 
@@ -652,6 +762,12 @@ textarea::placeholder {
     flex: 1 1 200px;
     min-width: 0;
     display: flex;
+}
+
+/* The textarea fills its wrapper, so when the wrapper is stretched (the shared
+   input after the divider is dragged up) the text box grows with it. */
+.input-wrap textarea {
+    flex: 1 1 auto;
 }
 
 .input-wrap textarea {
@@ -693,18 +809,33 @@ textarea::placeholder {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
-    flex-shrink: 0;
+    flex: 0 0 auto;        /* natural height until the divider is dragged */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* After a drag the panels grid has a fixed height, so the shared input takes
+   whatever is left: drag the divider up and the text box gets taller. */
+.container.input-resized .input-section {
+    flex: 1 1 auto;
 }
 
 .global-input-container {
     display: flex;
     gap: 10px;
-    align-items: flex-end;
+    align-items: stretch;  /* the text box fills the section's height */
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.global-input-container .btn {
+    align-self: flex-end;
 }
 
 .global-input {
     font-size: 0.95rem;
-    max-height: 120px;
+    min-height: 64px;      /* never shrinks below roughly three lines */
 }
 
 .status {
@@ -843,10 +974,118 @@ textarea::placeholder {
     gap: 8px;
 }
 
+/* ---- Incognito ----------------------------------------------------------------- */
+
+.btn-toggle.active {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--surface);
+}
+
+.btn-toggle.active:hover {
+    background: var(--ink-2);
+    border-color: var(--ink-2);
+    color: var(--surface);
+}
+
+/* A dashed outline on the shared input is the standing reminder that nothing is being saved. */
+.container.incognito .input-section {
+    border-style: dashed;
+    border-color: var(--ink-2);
+}
+
+/* ---- Saved chats list -------------------------------------------------------- */
+
+.modal-content-wide {
+    max-width: 680px;
+}
+
+.chats-hint {
+    margin: 0 0 12px;
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+.chats-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chats-empty {
+    padding: 18px 0;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.chat-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+}
+
+.chat-item.current {
+    border-color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.chat-item-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-item-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-item-meta {
+    font-size: 0.74rem;
+    color: var(--muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.chat-item-actions .btn {
+    padding: 3px 9px;
+    font-size: 0.74rem;
+}
+
 /* ---- Responsive ------------------------------------------------------------ */
+
+/* With five or six columns the header is tight: let the effort dropdown give way
+   first so the model name stays readable. */
+.panels-grid.grid-5 .panel-effort-select,
+.panels-grid.grid-6 .panel-effort-select {
+    max-width: 32%;
+}
+
+/* Narrow windows fall back to two columns (then one) so panels stay readable. */
+@media (max-width: 1400px) {
+    .panels-grid.grid-5,
+    .panels-grid.grid-6 {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
 
 @media (max-width: 1000px) {
     .panels-grid.grid-3,
+    .panels-grid.grid-4,
     .panels-grid.grid-5,
     .panels-grid.grid-6 {
         grid-template-columns: repeat(2, 1fr);

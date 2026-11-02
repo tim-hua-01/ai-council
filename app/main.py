@@ -9,10 +9,13 @@ generic backend handlers in ``app.api_clients``.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import sys
+import tempfile
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -69,6 +72,18 @@ class ChatRequest(BaseModel):
 class CountRequest(BaseModel):
     text: str
     model: str | None = None  # model id; non-Claude (or unknown) ids use a Claude reference
+
+
+class SavedChat(BaseModel):
+    """One saved conversation: the whole screen, every panel's transcript included."""
+
+    id: str
+    title: str = "Untitled chat"
+    created_at: str | None = None
+    updated_at: str | None = None
+    panel_count: int = 1
+    global_system_message: str = ""
+    panels: list[dict] = []  # {model, effort, system_message, transcript: [...]}
 
 
 @app.get("/")
@@ -160,6 +175,94 @@ async def count_tokens(request: CountRequest):
         }
     except Exception as exc:  # noqa: BLE001 - the badge just stays blank on failure
         return {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+
+
+# --- Saved chats ---------------------------------------------------------------
+# Chats are autosaved by the frontend as one JSON file each under data/chats/
+# (gitignored). Ids are generated client-side; they're restricted to a safe
+# character set so they can't escape the directory.
+
+CHATS_DIR = os.environ.get("AI4AIS_CHATS_DIR") or os.path.join(BASE_DIR, "data", "chats")
+_CHAT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _chat_path(chat_id: str) -> str:
+    if not _CHAT_ID_RE.fullmatch(chat_id):
+        raise HTTPException(status_code=400, detail="Invalid chat id")
+    return os.path.join(CHATS_DIR, f"{chat_id}.json")
+
+
+def _chat_summary(chat: dict) -> dict:
+    panels = chat.get("panels") or []
+    return {
+        "id": chat.get("id"),
+        "title": chat.get("title") or "Untitled chat",
+        "created_at": chat.get("created_at"),
+        "updated_at": chat.get("updated_at"),
+        "panel_count": chat.get("panel_count") or len(panels),
+        "models": [p.get("model") for p in panels],
+        "message_count": sum(len(p.get("transcript") or []) for p in panels),
+    }
+
+
+def _read_chat(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+@app.get("/api/chats")
+async def list_chats():
+    """Summaries of every saved chat, most recently updated first."""
+    summaries = []
+    if os.path.isdir(CHATS_DIR):
+        for name in os.listdir(CHATS_DIR):
+            if name.endswith(".json"):
+                chat = _read_chat(os.path.join(CHATS_DIR, name))
+                if chat:
+                    summaries.append(_chat_summary(chat))
+    summaries.sort(key=lambda c: c.get("updated_at") or "", reverse=True)
+    return {"chats": summaries}
+
+
+@app.get("/api/chats/{chat_id}")
+async def get_chat(chat_id: str):
+    chat = _read_chat(_chat_path(chat_id))
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return chat
+
+
+@app.put("/api/chats/{chat_id}")
+async def save_chat(chat_id: str, chat: SavedChat):
+    """Create or overwrite a saved chat. The body is the whole chat."""
+    path = _chat_path(chat_id)
+    if chat.id != chat_id:
+        raise HTTPException(status_code=400, detail="Chat id mismatch")
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    # Write to a temp file in the same directory, then rename, so a crash
+    # mid-write can't leave a truncated chat behind.
+    fd, tmp = tempfile.mkstemp(dir=CHATS_DIR, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(chat.model_dump(), f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return _chat_summary(chat.model_dump())
+
+
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(chat_id: str):
+    path = _chat_path(chat_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Chat not found")
+    os.unlink(path)
+    return {"deleted": chat_id}
 
 
 @app.post("/api/chat")
