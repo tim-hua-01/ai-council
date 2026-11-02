@@ -188,18 +188,6 @@ function anyRequestInFlight() {
     return globalRequestInProgress || panelStates.some((s) => s.isRequesting);
 }
 
-// Clear every transcript but keep the layout, models, and system messages.
-function startNewChat() {
-    if (anyRequestInFlight()) {
-        alert("Wait for the current responses to finish first.");
-        return;
-    }
-    const snap = snapshotChat();
-    snap.id = null;
-    snap.panels.forEach((p) => (p.transcript = []));
-    restoreChat(snap);
-}
-
 // ---- Edit & resample -------------------------------------------------------------
 // Each .message div in a chat area corresponds 1:1 to a transcript entry, so a
 // message's position in the DOM is its transcript index.
@@ -709,7 +697,6 @@ function setupEventListeners() {
     newTabBtn.addEventListener("click", () => {
         window.open(window.location.href, "_blank");
     });
-    document.getElementById("newChatBtn").addEventListener("click", startNewChat);
     document.getElementById("incognitoBtn").addEventListener("click", () => setIncognito(!incognito));
 
     // Saved chats modal
