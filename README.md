@@ -25,7 +25,8 @@ config edit, not a code change.
 - **Markdown rendering**, response timing, parallel requests.
 - **Saved chats**: every conversation is autosaved to `data/chats/` (or `AI4AIS_CHATS_DIR`) after each
   message. A refresh resumes the tab's chat; the **Chats** button reopens,
-  renames, or deletes past ones; **New Tab** starts a fresh one. **Incognito** (header toggle) stops all saving for
+  renames, or deletes past ones; **New Chat** clears the panels but keeps the
+  models and system messages, and **New Tab** opens a fresh chat in a new tab. **Incognito** (header toggle) stops all saving for
   that tab until you turn it off, at which point the chat is saved as it stands.
 - **Edit & resample**: *Edit* on any user message rewrites it and asks again from
   that point (in that panel, or in every panel that has the same message); *Retry*

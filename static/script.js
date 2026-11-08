@@ -49,8 +49,10 @@ function savePrefs() {
 
 // ---- Saved chats -------------------------------------------------------------
 // Every conversation is autosaved to the server (data/chats/<id>.json) after each
-// message. The chat id lives in sessionStorage, so a refresh resumes this tab's
-// chat while a new tab starts fresh; older chats come back via the Chats button.
+// message. The chat id lives in sessionStorage, and only a reload resumes it, so a
+// refresh keeps this tab's chat while any new tab (even one opened from this tab,
+// which inherits a copy of sessionStorage) starts fresh; older chats come back via
+// the Chats button.
 const CURRENT_CHAT_KEY = "ai4ais.currentChatId";
 const INCOGNITO_KEY = "ai4ais.incognito"; // sessionStorage: per tab, survives a refresh
 let currentChat = null; // {id, title, created_at} once the first message is sent
@@ -186,6 +188,18 @@ function restoreChat(chat) {
 
 function anyRequestInFlight() {
     return globalRequestInProgress || panelStates.some((s) => s.isRequesting);
+}
+
+// Clear every transcript but keep the layout, models, and system messages.
+function startNewChat() {
+    if (anyRequestInFlight()) {
+        alert("Wait for the current responses to finish first.");
+        return;
+    }
+    const snap = snapshotChat();
+    snap.id = null;
+    snap.panels.forEach((p) => (p.transcript = []));
+    restoreChat(snap);
 }
 
 // ---- Edit & resample -------------------------------------------------------------
@@ -418,8 +432,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     let resumed = null;
     try {
         if (sessionStorage.getItem(INCOGNITO_KEY)) setIncognito(true);
+        // Only a reload resumes the tab's chat. Browsers copy sessionStorage into tabs
+        // opened from this one (the New Tab button, Cmd-click, Duplicate Tab), and those
+        // should start a fresh chat rather than continue (and overwrite) this one.
+        const nav = performance.getEntriesByType("navigation")[0];
+        const isReload = nav ? nav.type === "reload" : false;
         const id = sessionStorage.getItem(CURRENT_CHAT_KEY);
-        if (id && !incognito) resumed = await fetchChat(id);
+        if (id && isReload && !incognito) resumed = await fetchChat(id);
     } catch (e) {
         resumed = null;
     }
@@ -697,6 +716,7 @@ function setupEventListeners() {
     newTabBtn.addEventListener("click", () => {
         window.open(window.location.href, "_blank");
     });
+    document.getElementById("newChatBtn").addEventListener("click", startNewChat);
     document.getElementById("incognitoBtn").addEventListener("click", () => setIncognito(!incognito));
 
     // Saved chats modal
