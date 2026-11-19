@@ -17,7 +17,7 @@ defaults:
   temperature: null            # null => omitted from the request (right for reasoning models)
   top_p: null
   timeout: 180                 # seconds per request
-  panel_count: 6               # panels shown on load (1-6)
+  panel_count: 4               # panels shown on load (1-6)
   # Options offered in every panel's reasoning-effort dropdown. "default" means
   # "use the model's configured reasoning_effort"; the rest are passed through.
   reasoning_effort_options: ["default", "none", "minimal", "low", "medium", "high"]
@@ -96,6 +96,14 @@ backends:
 # -----------------------------------------------------------------------------
 models:
   # --- Anthropic -------------------------------------------------------------
+  - id: fable-5.2
+    label: Claude Fable 5.2
+    backend: anthropic
+    model_name: claude-fable-5-2
+    reasoning_effort: high          # adaptive thinking
+
+  # Superseded by fable-5.2 in the default lineup — still available in every
+  # panel's dropdown.
   - id: fable-5.1
     label: Claude Fable 5.1
     backend: anthropic
@@ -109,6 +117,20 @@ models:
     reasoning_effort: high          # adaptive thinking
 
   # --- OpenAI ----------------------------------------------------------------
+  - id: gpt-6.2-astra
+    label: OpenAI GPT-6.2 Astra
+    backend: openai
+    model_name: gpt-6.2-astra
+    reasoning_effort: high
+
+  - id: gpt-6.2-sol
+    label: OpenAI GPT-6.2 Sol
+    backend: openai
+    model_name: gpt-6.2-sol
+    reasoning_effort: high
+
+  # Superseded by gpt-6.2-astra in the default lineup — still available in every
+  # panel's dropdown.
   - id: gpt-6-astra
     label: OpenAI GPT-6 Astra
     backend: openai
@@ -126,6 +148,24 @@ models:
     label: Gemini 3.8 Flash
     backend: openrouter
     model_name: google/gemini-3.8-flash
+    reasoning_effort: high
+
+  - id: gemini-4-neon
+    label: Gemini 4 Neon (OpenRouter)
+    backend: openrouter
+    model_name: google/gemini-4-neon
+    reasoning_effort: high
+
+  - id: gemini-4-hydrogen
+    label: Gemini 4 Hydrogen (OpenRouter)
+    backend: openrouter
+    model_name: google/gemini-4-hydrogen
+    reasoning_effort: high
+
+  - id: gemini-4-carbon
+    label: Gemini 4 Carbon (OpenRouter)
+    backend: openrouter
+    model_name: google/gemini-4-carbon
     reasoning_effort: high
 
   - id: gemini-4-argon
@@ -164,8 +204,7 @@ models:
     model_name: x-ai/grok-4.7
     reasoning_effort: high
 
-  # Superseded by grok-4.7 in the default lineup — still available in every
-  # panel's dropdown.
+  # Superseded by grok-4.7 — still available in every panel's dropdown.
   - id: grok-4.6
     label: Grok 4.6 (OpenRouter)
     backend: openrouter
@@ -190,9 +229,7 @@ models:
 # Which models fill the panels on page load, top to bottom (falls back to the
 # first model if there are more panels than entries). Use the `id`s above.
 default_panel_models:
-  - fable-5.1
-  - gpt-6-astra
-  - gemini-3.8-flash
-  - kimi-k3
-  - glm-5.3
-  - grok-4.7
+  - fable-5.2
+  - gpt-6.2-astra
+  - gemini-4-argon
+  - muse-wonder

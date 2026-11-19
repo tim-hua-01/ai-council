@@ -36,17 +36,24 @@ config edit, not a code change.
 
 | Panel id | Provider | Backend | Wire model name | Default effort | In default panels |
 |---|---|---|---|---|---|
-| `fable-5.1` | Anthropic | anthropic | `claude-fable-5-1` | high (adaptive) | yes |
-| `gpt-6-astra` | OpenAI | openai | `gpt-6-astra` | high | yes |
-| `gemini-3.8-flash` | Google | openrouter | `google/gemini-3.8-flash` | high | yes |
-| `kimi-k3` | Moonshot | openrouter | `moonshotai/kimi-k3` | high | yes |
-| `glm-5.3` | Z.AI | openrouter | `z-ai/glm-5.3` | high | yes |
-| `grok-4.7` | xAI | openrouter | `x-ai/grok-4.7` | high | yes |
-| `gemini-4-argon` | Google | openrouter | `google/gemini-4-argon` | high | no — pick it from a panel's dropdown |
-| `muse-wonder` | Meta | openrouter | `meta/muse-wonder` | high | no — pick it from a panel's dropdown |
-| `deepseek-v4-pro` | DeepSeek | openrouter | `deepseek/deepseek-v4-pro` | high | no — pick it from a panel's dropdown |
-| `grok-4.6` | xAI | openrouter | `x-ai/grok-4.6` | high | no — pick it from a panel's dropdown |
+| `fable-5.2` | Anthropic | anthropic | `claude-fable-5-2` | high (adaptive) | yes |
+| `gpt-6.2-astra` | OpenAI | openai | `gpt-6.2-astra` | high | yes |
+| `gemini-4-argon` | Google | openrouter | `google/gemini-4-argon` | high | yes |
+| `muse-wonder` | Meta | openrouter | `meta/muse-wonder` | high | yes |
+| `fable-5.1` | Anthropic | anthropic | `claude-fable-5-1` | high (adaptive) | no — pick it from a panel's dropdown |
+| `fable-5` | Anthropic | anthropic | `claude-fable-5` | high (adaptive) | no — pick it from a panel's dropdown |
+| `gpt-6.2-sol` | OpenAI | openai | `gpt-6.2-sol` | high | no — pick it from a panel's dropdown |
+| `gpt-6-astra` | OpenAI | openai | `gpt-6-astra` | high | no — pick it from a panel's dropdown |
 | `gpt-6.1-sol` | OpenAI | openai | `gpt-6.1-sol` | high | no — pick it from a panel's dropdown |
+| `gemini-4-neon` | Google | openrouter | `google/gemini-4-neon` | high | no — pick it from a panel's dropdown |
+| `gemini-4-hydrogen` | Google | openrouter | `google/gemini-4-hydrogen` | high | no — pick it from a panel's dropdown |
+| `gemini-4-carbon` | Google | openrouter | `google/gemini-4-carbon` | high | no — pick it from a panel's dropdown |
+| `gemini-3.8-flash` | Google | openrouter | `google/gemini-3.8-flash` | high | no — pick it from a panel's dropdown |
+| `kimi-k3` | Moonshot | openrouter | `moonshotai/kimi-k3` | high | no — pick it from a panel's dropdown |
+| `glm-5.3` | Z.AI | openrouter | `z-ai/glm-5.3` | high | no — pick it from a panel's dropdown |
+| `grok-4.7` | xAI | openrouter | `x-ai/grok-4.7` | high | no — pick it from a panel's dropdown |
+| `grok-4.6` | xAI | openrouter | `x-ai/grok-4.6` | high | no — pick it from a panel's dropdown |
+| `deepseek-v4-pro` | DeepSeek | openrouter | `deepseek/deepseek-v4-pro` | high | no — pick it from a panel's dropdown |
 | `deepseek-v4.1-flash` | DeepSeek | openrouter | `deepseek/deepseek-v4.1-flash-1017` | high | no — pick it from a panel's dropdown |
 
 ## Setup & running
