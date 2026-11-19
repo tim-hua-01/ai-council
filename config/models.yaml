@@ -24,8 +24,9 @@ defaults:
 
 # -----------------------------------------------------------------------------
 # Backends: where requests go and how reasoning effort is expressed on the wire.
-#   type:            "openai" (OpenAI-compatible /chat/completions) or "anthropic"
-#   base_url:        chat-completions base URL (openai-type only); fallback when
+#   type:            "openai" (OpenAI-compatible /chat/completions), "anthropic",
+#                     or "gemini" (Google's native generateContent)
+#   base_url:        API base URL (openai and gemini types); fallback when
 #                     base_url_env is unset or empty
 #   base_url_env:    optional env var that overrides base_url when set — this is
 #                     how a proxy/gateway gets wired in without touching this file:
@@ -40,6 +41,8 @@ defaults:
 #       openrouter  -> body["reasoning"] = {"effort": <effort>} (OpenRouter unified)
 #       adaptive    -> Anthropic adaptive thinking + output_config.effort (Opus 4.7/4.8+)
 #       budget      -> Anthropic manual extended thinking via thinking_budget_tokens
+#       gemini      -> generationConfig.thinkingConfig = {includeThoughts: true,
+#                      thinkingLevel: <effort>} (Gemini native)
 #       none        -> no reasoning params sent
 #   api:             openai-type only: "chat" (default, /chat/completions) or
 #                     "responses" (/responses). Use "responses" for OpenAI models:
@@ -82,6 +85,17 @@ backends:
     extra_headers:
       HTTP-Referer: http://localhost:8000
       X-Title: AI4AIS Comparison Panel
+
+  # Google's own API. No bundled model uses it — the Gemini entries below go
+  # through OpenRouter — but any of them can be pointed here from
+  # models.local.yaml with `backend: google` and a bare model_name
+  # (e.g. gemini-4-argon).
+  google:
+    type: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    base_url_env: GEMINI_BASE_URL
+    api_key_env: GEMINI_API_KEY
+    reasoning_style: gemini
 
 # -----------------------------------------------------------------------------
 # Models. Each `id` is what the UI and API use. `model_name` is the provider's

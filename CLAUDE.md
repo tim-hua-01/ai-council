@@ -48,7 +48,7 @@ The project includes a FastAPI-based web application for comparing responses fro
 ### Architecture
 - **Config**: `config/models.yaml` - single source of truth for models, backends, and UI defaults.
 - **Config loader**: `app/config.py` - parses the YAML into typed dataclasses (`ModelConfig`, `BackendConfig`, `AppConfig`).
-- **API Clients**: `app/api_clients.py` - two generic handlers, `call_openai_compatible` (httpx) and `call_anthropic` (SDK), with `call_model()` dispatching by backend type.
+- **API Clients**: `app/api_clients.py` - three generic handlers, `call_openai_compatible` (httpx), `call_anthropic` (SDK) and `call_gemini` (httpx, Google's native `generateContent`), with `call_model()` dispatching by backend type.
 - **Backend**: `app/main.py` - FastAPI server. Endpoints: `/api/models`, `/api/config`, `/api/chat`, `/api/count_tokens`, and `/api/chats` (list/get/put/delete saved chats).
 - **Saved chats**: the frontend autosaves the whole screen (panel count, models, efforts, system messages, per-panel transcripts) to `data/chats/<id>.json` (gitignored; override the directory with `AI4AIS_CHATS_DIR`, and always do so for test runs so real chats are never touched) after every message. The current chat id is kept in `sessionStorage` and is only resumed when the page load is a reload (`performance` navigation type), so a refresh resumes it and every new tab starts fresh — including tabs opened from this one (New Tab button, Cmd-click, Duplicate Tab), which inherit a copy of `sessionStorage`. The header's Incognito toggle (also per tab, in `sessionStorage`) makes `persistChat` a no-op and clears the stored id; turning it off saves the current state. Transcript entries carry `error: true` for failed responses, which are shown but excluded from the messages sent to the model. Each `.message` div in a chat area maps 1:1 to a transcript entry, so Edit/Retry find their index by DOM position, truncate the transcript there, redraw, and resend.
 - **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - loads the model catalog from `/api/models` at runtime; nothing about models is hardcoded.
@@ -60,13 +60,13 @@ fable-5.2, fable-5.1, fable-5 (Anthropic); gpt-6.2-astra, gpt-6.2-sol, gpt-6-ast
 `config/models.local.yaml` (gitignored, optional) is merged over `config/models.yaml` at startup: extra models, changed fields on existing models (matched by `id`), per-backend tweaks such as `model_prefix`, and a replacement `default_panel_models`. See `config/models.local.example.yaml`. Restart the server after editing — `--reload` only watches `.py` files. Point at a different file with `AI4AIS_LOCAL_CONFIG`.
 
 ### Reasoning effort
-Each model has a default `reasoning_effort`; the UI dropdown overrides it per panel. The wire encoding is set by the backend/model `reasoning_style`: `effort` (OpenAI), `openrouter` (`reasoning: {effort}`), `adaptive` (Anthropic adaptive + `output_config.effort`), `budget` (Anthropic `thinking_budget_tokens`), or `none`.
+Each model has a default `reasoning_effort`; the UI dropdown overrides it per panel. The wire encoding is set by the backend/model `reasoning_style`: `effort` (OpenAI), `openrouter` (`reasoning: {effort}`), `adaptive` (Anthropic adaptive + `output_config.effort`), `budget` (Anthropic `thinking_budget_tokens`), `gemini` (`thinkingConfig.thinkingLevel` + `includeThoughts`), or `none`.
 
 ### Setup
-API keys are read from the **environment** (no `.env`/dotenv) — set the relevant vars before starting the server. Relevant vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` (GLM/Kimi/Gemini/Grok/DeepSeek all route through OpenRouter). Override the config path with `AI4AIS_CONFIG`.
+API keys are read from the **environment** (no `.env`/dotenv) — set the relevant vars before starting the server. Relevant vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` (GLM/Kimi/Gemini/Grok/DeepSeek all route through OpenRouter). `GEMINI_API_KEY` is only needed for models moved onto the `google` backend (`type: gemini`), which no bundled model uses — a `config/models.local.yaml` entry can switch a Gemini model to it with `backend: google` and a bare `model_name`. Override the config path with `AI4AIS_CONFIG`.
 
 To point requests at a proxy or gateway instead of the public APIs, export
-`OPENAI_BASE_URL` and/or `OPENROUTER_BASE_URL` — the `openai`/`openrouter` backends in
+`OPENAI_BASE_URL`, `OPENROUTER_BASE_URL` and/or `GEMINI_BASE_URL` — the `openai`/`openrouter`/`google` backends in
 `config/models.yaml` read these at call time via `base_url_env` and use them in place of the
 YAML `base_url` whenever they're set. `ANTHROPIC_BASE_URL` needs no such wiring: the Anthropic
 SDK already picks it up from the environment on its own. If the gateway expects different model
@@ -74,7 +74,7 @@ names, set them in `config/models.local.yaml` (per-model `model_name`, or a back
 `model_prefix`).
 
 ### Implementation Notes
-- OpenAI-compatible calls use `httpx.AsyncClient`; Anthropic uses the official async SDK.
+- OpenAI-compatible and Gemini calls use `httpx.AsyncClient` (shared `_post_json` helper); Anthropic uses the official async SDK.
 - Requests executed in parallel via `asyncio.gather`; timing measured server-side.
 - Each handler returns `(response_dict, duration_seconds)` where the dict has `content` and `thinking` keys.
 - Errors are returned as `Error: ...` content strings and shown in the panel, never raised to the client.

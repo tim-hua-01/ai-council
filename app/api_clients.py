@@ -1,12 +1,13 @@
 """Generic, config-driven API clients.
 
-Two handlers cover every provider:
+Three handlers cover every provider:
 
 * :func:`call_openai_compatible` — any ``/chat/completions`` endpoint (OpenAI,
   OpenRouter, and anything else OpenAI-compatible), via ``httpx``.
 * :func:`call_anthropic` — Anthropic Messages via the official SDK.
+* :func:`call_gemini` — Google's native ``generateContent`` endpoint, via ``httpx``.
 
-Both take a :class:`~app.config.ModelConfig` plus the conversation and an optional
+All take a :class:`~app.config.ModelConfig` plus the conversation and an optional
 per-request ``effort`` override, and return ``(response_dict, duration_seconds)``
 where ``response_dict`` has ``content`` and ``thinking`` keys. :func:`call_model`
 dispatches to the right one based on the backend type.
@@ -20,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import httpx
 
@@ -188,30 +189,16 @@ def _extract_responses_usage(data: dict) -> Optional[dict]:
     }
 
 
-async def call_openai_compatible(
+async def _post_json(
     model: ModelConfig,
-    messages: list,
-    api_key: str,
-    effort: Optional[str] = None,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    extract_message: Callable[[dict], Tuple[str, Optional[str]]],
+    extract_usage: Callable[[dict], Optional[dict]],
 ) -> Tuple[dict, float]:
-    """Call an OpenAI-compatible ``/chat/completions`` (or ``/responses``) endpoint."""
+    """POST ``payload`` and shape the reply; any failure becomes an ``Error: ...`` response."""
     start = time.time()
-    backend = model.backend
-    base_url = backend.resolved_base_url
-    if not base_url:
-        raise ValueError(f"Backend {backend.name!r} has no base_url for OpenAI-compatible calls")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        **backend.extra_headers,
-    }
-    use_responses = backend.api == "responses"
-    url = f"{base_url.rstrip('/')}/{'responses' if use_responses else 'chat/completions'}"
-    payload = (
-        _build_responses_payload(model, messages, effort)
-        if use_responses
-        else _build_openai_payload(model, messages, effort)
-    )
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -222,12 +209,8 @@ async def call_openai_compatible(
             )
             response.raise_for_status()
             data = response.json()
-            if use_responses:
-                content, thinking = _extract_responses_message(data)
-                usage = _extract_responses_usage(data)
-            else:
-                content, thinking = _extract_openai_message(data)
-                usage = _extract_chat_usage(data)
+            content, thinking = extract_message(data)
+            usage = extract_usage(data)
             _log_usage(model, usage)
             return format_response(content, thinking=thinking, usage=usage), time.time() - start
     except httpx.TimeoutException:
@@ -245,6 +228,137 @@ async def call_openai_compatible(
             format_response("", error=f"Error: {type(exc).__name__}: {exc}"),
             time.time() - start,
         )
+
+
+async def call_openai_compatible(
+    model: ModelConfig,
+    messages: list,
+    api_key: str,
+    effort: Optional[str] = None,
+) -> Tuple[dict, float]:
+    """Call an OpenAI-compatible ``/chat/completions`` (or ``/responses``) endpoint."""
+    backend = model.backend
+    base_url = backend.resolved_base_url
+    if not base_url:
+        raise ValueError(f"Backend {backend.name!r} has no base_url for OpenAI-compatible calls")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **backend.extra_headers,
+    }
+    use_responses = backend.api == "responses"
+    url = f"{base_url.rstrip('/')}/{'responses' if use_responses else 'chat/completions'}"
+    payload = (
+        _build_responses_payload(model, messages, effort)
+        if use_responses
+        else _build_openai_payload(model, messages, effort)
+    )
+    if use_responses:
+        return await _post_json(
+            model, url, headers, payload, _extract_responses_message, _extract_responses_usage
+        )
+    return await _post_json(
+        model, url, headers, payload, _extract_openai_message, _extract_chat_usage
+    )
+
+
+# --- Gemini backend (native generateContent) -----------------------------------
+
+
+def _build_gemini_payload(
+    model: ModelConfig, messages: list, effort: Optional[str]
+) -> dict[str, Any]:
+    """Assemble a ``generateContent`` body from OpenAI-style messages."""
+    system_parts: list[dict[str, str]] = []
+    contents: list[dict[str, Any]] = []
+    for message in messages:
+        text = message.get("content") or ""
+        if message.get("role") == "system":
+            if text:
+                system_parts.append({"text": text})
+        else:
+            role = "model" if message.get("role") == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": text}]})
+
+    payload: dict[str, Any] = {"contents": contents}
+    if system_parts:
+        payload["systemInstruction"] = {"parts": system_parts}
+
+    generation_config: dict[str, Any] = {}
+    if model.max_tokens is not None:
+        generation_config["maxOutputTokens"] = model.max_tokens  # thoughts count against it
+    if model.temperature is not None:
+        generation_config["temperature"] = model.temperature
+    if model.top_p is not None:
+        generation_config["topP"] = model.top_p
+    if model.reasoning_style == "gemini":
+        # These models always think, so always ask for the thought summaries; an
+        # inactive effort just leaves the level at the model's own default.
+        thinking_config: dict[str, Any] = {"includeThoughts": True}
+        if _effort_is_active(effort):
+            thinking_config["thinkingLevel"] = effort
+        generation_config["thinkingConfig"] = thinking_config
+    if generation_config:
+        payload["generationConfig"] = generation_config
+    return payload
+
+
+def _extract_gemini_message(data: dict) -> Tuple[str, Optional[str]]:
+    """Pull (content, thinking) out of a ``generateContent`` response."""
+    candidates = data.get("candidates") or []
+    if not candidates:
+        reason = (data.get("promptFeedback") or {}).get("blockReason")
+        raise ValueError(f"API returned no candidates{f' (blocked: {reason})' if reason else ''}")
+    candidate = candidates[0]
+    texts: list[str] = []
+    thoughts: list[str] = []
+    for part in (candidate.get("content") or {}).get("parts") or []:
+        if part.get("text"):
+            (thoughts if part.get("thought") else texts).append(part["text"])
+    content = "".join(texts)
+    thinking = "\n\n".join(thoughts) or None
+    if not content and not thinking:
+        reason = candidate.get("finishReason")
+        raise ValueError(f"API returned no content{f' (finish reason: {reason})' if reason else ''}")
+    return content, thinking
+
+
+def _extract_gemini_usage(data: dict) -> Optional[dict]:
+    usage = data.get("usageMetadata")
+    if not isinstance(usage, dict):
+        return None
+    # Thought tokens are reported apart from the answer's; the other backends fold
+    # reasoning into their output count, so do the same here.
+    output_counts = [usage.get("candidatesTokenCount"), usage.get("thoughtsTokenCount")]
+    return {
+        "input": usage.get("promptTokenCount"),
+        "cached": usage.get("cachedContentTokenCount"),
+        "cache_write": None,
+        "output": sum(n or 0 for n in output_counts) if any(output_counts) else None,
+    }
+
+
+async def call_gemini(
+    model: ModelConfig,
+    messages: list,
+    api_key: str,
+    effort: Optional[str] = None,
+) -> Tuple[dict, float]:
+    """Call Google's native ``models/<name>:generateContent`` endpoint."""
+    backend = model.backend
+    base_url = backend.resolved_base_url
+    if not base_url:
+        raise ValueError(f"Backend {backend.name!r} has no base_url for Gemini calls")
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+        **backend.extra_headers,
+    }
+    url = f"{base_url.rstrip('/')}/models/{model.model_name}:generateContent"
+    payload = _build_gemini_payload(model, messages, effort)
+    return await _post_json(
+        model, url, headers, payload, _extract_gemini_message, _extract_gemini_usage
+    )
 
 
 # --- Anthropic backend ---------------------------------------------------------
@@ -384,4 +498,6 @@ async def call_model(
     """Route to the correct backend handler based on ``model.backend.type``."""
     if model.backend.type == "anthropic":
         return await call_anthropic(model, messages, api_key, effort)
+    if model.backend.type == "gemini":
+        return await call_gemini(model, messages, api_key, effort)
     return await call_openai_compatible(model, messages, api_key, effort)

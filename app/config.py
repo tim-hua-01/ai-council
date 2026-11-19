@@ -20,9 +20,9 @@ import yaml
 
 # Reasoning styles understood by the API client layer. See config/models.yaml for
 # what each one emits on the wire.
-ReasoningStyle = Literal["effort", "openrouter", "adaptive", "budget", "none"]
+ReasoningStyle = Literal["effort", "openrouter", "adaptive", "budget", "gemini", "none"]
 
-BackendType = Literal["openai", "anthropic"]
+BackendType = Literal["openai", "anthropic", "gemini"]
 
 # Optional per-machine overrides, merged over the main config if present (gitignored).
 LOCAL_CONFIG_NAME = "models.local.yaml"
@@ -41,7 +41,7 @@ class BackendConfig:
     type: BackendType
     api_key_env: str
     reasoning_style: ReasoningStyle = "none"
-    base_url: str | None = None  # required for openai-type backends; fallback if base_url_env unset
+    base_url: str | None = None  # required for openai/gemini-type backends; fallback if base_url_env unset
     base_url_env: str | None = None  # optional env var that overrides base_url (e.g. for a proxy)
     max_tokens_param: str = "max_tokens"
     extra_headers: dict[str, str] = field(default_factory=dict)
@@ -193,8 +193,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     backends: dict[str, BackendConfig] = {}
     for name, spec in (raw.get("backends") or {}).items():
         backend_type = spec.get("type", "openai")
-        if backend_type == "openai" and not spec.get("base_url"):
-            raise ValueError(f"Backend {name!r} is type 'openai' but has no base_url")
+        if backend_type not in ("openai", "anthropic", "gemini"):
+            raise ValueError(f"Backend {name!r} has unknown type {backend_type!r}")
+        if backend_type in ("openai", "gemini") and not spec.get("base_url"):
+            raise ValueError(f"Backend {name!r} is type {backend_type!r} but has no base_url")
         if not spec.get("api_key_env"):
             raise ValueError(f"Backend {name!r} is missing api_key_env")
         backends[name] = BackendConfig(

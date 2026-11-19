@@ -65,6 +65,7 @@ relevant vars for the providers you use, then start the server:
 export OPENAI_API_KEY=...        # OpenAI models
 export ANTHROPIC_API_KEY=...     # Claude models
 export OPENROUTER_API_KEY=...    # GLM, Kimi/Moonshot, Gemini, Grok, DeepSeek (all via OpenRouter)
+export GEMINI_API_KEY=...        # optional: only for models moved to the `google` backend
 
 uv sync
 uv run uvicorn app.main:app --reload --port 8000
@@ -79,9 +80,9 @@ lineup — create `config/models.local.yaml` (gitignored). It is merged over
 format. Restart the server after editing it.
 
 To route requests through a proxy (e.g. an internal gateway) instead of the
-public OpenAI/OpenRouter APIs, additionally export `OPENAI_BASE_URL` and/or
-`OPENROUTER_BASE_URL` — the backends read these at request time and use them
-in place of the YAML `base_url`. For Anthropic, just set `ANTHROPIC_BASE_URL`;
+public OpenAI/OpenRouter/Google APIs, additionally export `OPENAI_BASE_URL`,
+`OPENROUTER_BASE_URL` and/or `GEMINI_BASE_URL` — the backends read these at
+request time and use them in place of the YAML `base_url`. For Anthropic, just set `ANTHROPIC_BASE_URL`;
 the SDK reads it on its own, no app-side wiring needed. The API key vars above
 double as wherever the proxy expects its token.
 
@@ -101,8 +102,8 @@ Open `config/models.yaml`. It has three sections:
 
 - **`defaults`** — app-wide fallbacks (max_tokens, timeout, panel count, and the
   list of reasoning-effort options shown in the UI).
-- **`backends`** — providers. Each defines a `type` (`openai`-compatible or
-  `anthropic`), `base_url` (with an optional `base_url_env` override for
+- **`backends`** — providers. Each defines a `type` (`openai`-compatible,
+  `anthropic`, or `gemini` for Google's native API), `base_url` (with an optional `base_url_env` override for
   proxies), `api_key_env`, and a `reasoning_style` that controls how reasoning
   effort is encoded on the wire.
 - **`models`** — selectable models, each pointing at a backend.
@@ -143,16 +144,35 @@ depends on the backend's (or model's) `reasoning_style`:
 | `openrouter` | `reasoning: {effort: <value>}` (OpenRouter unified) |
 | `adaptive` | Anthropic adaptive thinking + `output_config.effort` (Opus 4.7/4.8+) |
 | `budget` | Anthropic manual extended thinking via `thinking_budget_tokens` |
+| `gemini` | `generationConfig.thinkingConfig: {includeThoughts: true, thinkingLevel: <value>}` (Gemini native) |
 | `none` | no reasoning params sent |
 
 An effort of `none`/`default` (or empty) sends no reasoning parameter.
+
+### Calling Gemini through Google's own API
+
+The bundled Gemini models go through OpenRouter. The `google` backend
+(`type: gemini`, key in `GEMINI_API_KEY`) talks to Google's native
+`generateContent` endpoint instead; move a model onto it from
+`config/models.local.yaml`:
+
+```yaml
+models:
+  - id: gemini-4-argon
+    backend: google
+    model_name: gemini-4-argon   # Google's id, without the OpenRouter "google/" prefix
+```
+
+Gemini has no "thinking off": an effort of `none` leaves the level at the model's
+default, and a level the model doesn't support (e.g. `minimal` on Gemini 4) comes
+back as an error in the panel.
 
 ## Architecture
 
 ```
 app/
   config.py        # YAML -> typed dataclasses (models, backends, defaults)
-  api_clients.py   # generic handlers: call_openai_compatible / call_anthropic
+  api_clients.py   # generic handlers: call_openai_compatible / call_anthropic / call_gemini
   main.py          # FastAPI: /api/models, /api/config, /api/chat, /api/chats
 config/
   models.yaml      # the single source of truth for models & providers
@@ -161,8 +181,8 @@ templates/         # index.html
 test_models.py     # config-driven smoke test
 ```
 
-- **Backend dispatch**: `call_model()` routes to `call_anthropic` (official SDK)
-  or `call_openai_compatible` (`httpx`) based on the backend type. This mirrors
+- **Backend dispatch**: `call_model()` routes to `call_anthropic` (official SDK),
+  `call_gemini` or `call_openai_compatible` (both `httpx`) based on the backend type. This mirrors
   how a generic multi-backend LLM client builds per-backend sampling params.
 - **Frontend** fetches `/api/models` and `/api/config` on load, so the model
   dropdowns and reasoning selectors are populated entirely from the server.
